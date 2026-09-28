@@ -341,3 +341,73 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background-color: #3c4c5e;
 }
+
+/* ============================================================
+   登录页
+   ============================================================ */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(ellipse at top, #182430 0%, var(--bg-base) 60%);
+}
+
+.login-card {
+  width: 420px;
+  max-width: 100%;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.login-brand__icon {
+  font-size: 34px;
+  color: var(--color-primary);
+}
+
+.login-brand__title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.login-brand__subtitle {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  margin-top: 2px;
+}
+
+/* ============================================================
+   侧边栏当前用户区
+   ============================================================ */
+.app-user {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: background-color 0.2s;
+}
+
+.app-user:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.app-user__name {
+  color: inherit;
+}
+
+/* 设置页小型统计块（与 antd Statistic 标题风格对齐） */
+.mini-stat__title {
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.45);
+}

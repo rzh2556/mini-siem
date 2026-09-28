@@ -13,6 +13,8 @@ from app.models.schemas import Rule, RuleCondition, Severity, ThresholdConfig
 logger = logging.getLogger(__name__)
 
 OVERRIDE_FILE = "_overrides.json"
+# 后台新增/编辑的自定义规则统一保存在该文件，与内置规则文件隔离
+MANAGED_FILE = "custom_managed.yml"
 
 
 class RuleLoader:
@@ -23,6 +25,8 @@ class RuleLoader:
         self.rules_dir = Path(rules_dir)
         self.rules: list[Rule] = []
         self.overrides: dict[str, dict[str, Any]] = self._load_overrides()
+        # 后台管理的自定义规则 ID 集合，由自定义规则文件内容填充
+        self.managed_ids: set[str] = set()
         self._signature: dict[str, float] = {}
 
     # ---------------- 加载 ----------------
@@ -50,6 +54,7 @@ class RuleLoader:
             logger.warning("规则目录不存在: %s", self.rules_dir)
             return rules
 
+        self.managed_ids = set(self._read_managed_ids())
         for path in sorted(self.rules_dir.glob("*.y*ml")):
             for raw in self._read_rule_file(path):
                 rule = self._build_rule(raw, path)
@@ -131,6 +136,73 @@ class RuleLoader:
             self.load()
             return True
         return False
+
+    # ---------------- 后台自定义规则 ----------------
+
+    def _managed_path(self) -> Path:
+        """返回后台自定义规则文件路径。"""
+        return self.rules_dir / MANAGED_FILE
+
+    def _read_managed_dicts(self) -> list[dict[str, Any]]:
+        """读取自定义规则文件中的原始规则字典列表。"""
+        path = self._managed_path()
+        if not path.exists():
+            return []
+        return self._read_rule_file(path)
+
+    def _read_managed_ids(self) -> list[str]:
+        """读取自定义规则文件中全部规则 ID。"""
+        return [str(item.get("id")) for item in self._read_managed_dicts() if item.get("id")]
+
+    def is_managed(self, rule_id: str) -> bool:
+        """判断规则是否为后台新增/管理的自定义规则。"""
+        return rule_id in self.managed_ids
+
+    def _write_managed(self, rules_data: list[dict[str, Any]]) -> None:
+        """把自定义规则列表写回 YAML 文件。"""
+        self.rules_dir.mkdir(parents=True, exist_ok=True)
+        content = yaml.safe_dump(
+            {"rules": rules_data}, allow_unicode=True, sort_keys=False, default_flow_style=False
+        )
+        self._managed_path().write_text(content, encoding="utf-8")
+
+    def _drop_override(self, rule_id: str) -> None:
+        """删除某条规则的运行期覆盖配置（自定义规则以文件内容为准）。"""
+        if rule_id in self.overrides:
+            self.overrides.pop(rule_id)
+            self._save_overrides()
+
+    def upsert_managed(self, rule: Rule) -> Rule:
+        """新增或更新一条自定义规则并立即重新加载，返回生效后的规则对象。"""
+        rules_data = self._read_managed_dicts()
+        # enabled_source 为运行期字段，不应写入 YAML
+        payload = rule.model_dump(by_alias=True, exclude={"enabled_source"})
+        replaced = False
+        for index, item in enumerate(rules_data):
+            if item.get("id") == rule.id:
+                rules_data[index] = payload
+                replaced = True
+                break
+        if not replaced:
+            rules_data.append(payload)
+        self._write_managed(rules_data)
+        self._drop_override(rule.id)
+        self.load()
+        target = next((r for r in self.rules if r.id == rule.id), None)
+        if target is None:  # 理论上不会发生，刚写入就应能加载到
+            raise ValueError(f"规则 {rule.id} 写入后加载失败")
+        return target
+
+    def delete_managed(self, rule_id: str) -> bool:
+        """删除一条自定义规则，返回是否实际删除。"""
+        rules_data = self._read_managed_dicts()
+        remaining = [item for item in rules_data if item.get("id") != rule_id]
+        if len(remaining) == len(rules_data):
+            return False
+        self._write_managed(remaining)
+        self._drop_override(rule_id)
+        self.load()
+        return True
 
 
 def normalize_rule_dict(raw: dict[str, Any]) -> dict[str, Any]:

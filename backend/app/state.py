@@ -7,12 +7,14 @@ from app.engine.matcher import RuleEngine
 from app.engine.pipeline import IngestPipeline
 from app.engine.rule_loader import RuleLoader
 from app.storage import StorageBackend
+from app.system import SystemStore
 
 
 class AppState:
     """保存全局单例组件，供 API 依赖注入使用。"""
 
     storage: StorageBackend | None = None
+    system: SystemStore | None = None
     loader: RuleLoader | None = None
     engine: RuleEngine | None = None
     aggregator: AlertAggregator | None = None

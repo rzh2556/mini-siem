@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.api import alerts, ingest, logs, rules, stats
+from app.api import admin, alerts, auth, ingest, logs, rules, stats
 from app.config import settings
 from app.engine.aggregator import AlertAggregator
 from app.engine.geoip import GeoIPResolver
@@ -22,6 +22,8 @@ from app.engine.rule_loader import RuleLoader
 from app.state import state
 from app.storage.es_client import ESStorage
 from app.storage.sqlite_client import SQLiteStorage
+from app.system import SystemStore
+from app.system.store import EDITABLE_SETTINGS
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -74,9 +76,27 @@ def build_storage() -> ESStorage | SQLiteStorage:
     return SQLiteStorage(settings.sqlite_path, settings.es_index_prefix, settings.es_retention_days)
 
 
+def init_system() -> SystemStore:
+    """初始化系统库：应用后台保存的运行参数，创建管理员账号与 JWT 密钥。"""
+    system = SystemStore(settings.system_db_path)
+
+    # 后台改过的配置优先于环境变量/.env，在组件装配前应用
+    for key, value in system.get_settings_overrides().items():
+        if key in EDITABLE_SETTINGS and value is not None:
+            setattr(settings, key, value)
+
+    # 未通过环境变量指定初始密码时，使用默认密码并要求首次登录后修改
+    initial_password = settings.admin_password or "admin123"
+    system.ensure_admin(settings.admin_username, initial_password, must_change=not settings.admin_password)
+    if not settings.jwt_secret:
+        system.get_jwt_secret()
+    return system
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理：启动时装配组件，关闭时释放资源。"""
+    system = init_system()
     storage = build_storage()
     loader = RuleLoader(settings.rules_dir)
     engine = RuleEngine()
@@ -90,6 +110,7 @@ async def lifespan(app: FastAPI):
     geoip = GeoIPResolver(settings.geoip_db_path, settings.geoip_online_fallback)
     pipeline = IngestPipeline(storage, loader, engine, aggregator, geoip)
 
+    state.system = system
     state.storage = storage
     state.loader = loader
     state.engine = engine
@@ -109,6 +130,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
     await geoip.close()
     await storage.close()
+    system.close()
     logger.info("Mini SIEM 后端已关闭")
 
 
@@ -128,7 +150,7 @@ app.add_middleware(
 )
 
 API_PREFIX = "/api/v1"
-for module in (ingest, logs, alerts, rules, stats):
+for module in (auth, ingest, logs, alerts, rules, stats, admin):
     app.include_router(module.router, prefix=API_PREFIX)
 
 

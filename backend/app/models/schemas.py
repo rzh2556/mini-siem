@@ -203,6 +203,47 @@ class RuleUpdate(BaseModel):
     threshold: ThresholdConfig | None = None
 
 
+class LoginRequest(BaseModel):
+    """管理员登录入参。"""
+
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """登录成功后返回的 JWT 与账号信息。"""
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+    username: str
+    must_change_password: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    """修改密码入参。"""
+
+    old_password: str
+    new_password: str
+
+
+class SettingsUpdate(BaseModel):
+    """后台可修改的运行参数（全部可选，仅提交需要修改的键）。"""
+
+    es_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    alert_cooldown: int | None = Field(default=None, ge=0, le=7 * 24 * 3600)
+    min_alert_severity: Severity | None = None
+    ip_whitelist: str | None = None
+    ignore_internal_src: bool | None = None
+    geoip_online_fallback: bool | None = None
+    geoip_db_path: str | None = None
+    log_level: str | None = None
+    cors_origins: str | None = None
+    api_token: str | None = None
+    agent_token: str | None = None
+    rules_reload_interval: int | None = Field(default=None, ge=5, le=3600)
+
+
 class AlertUpdate(BaseModel):
     """告警状态更新入参。"""
 

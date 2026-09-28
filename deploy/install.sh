@@ -70,6 +70,8 @@ sync_backend() {
     mkdir -p "${INSTALL_DIR}"/{backend,rules,data,frontend,geoip}
     cp -a "${SRC_DIR}/backend/app" "${INSTALL_DIR}/backend/"
     cp -a "${SRC_DIR}/backend/requirements.txt" "${INSTALL_DIR}/backend/"
+    # 忘记管理员密码时的重置工具
+    cp -a "${SRC_DIR}/backend/reset_admin.py" "${INSTALL_DIR}/backend/"
     cp -a "${SRC_DIR}/backend/rules/." "${INSTALL_DIR}/rules/"
 }
 
@@ -147,6 +149,7 @@ write_env() {
 # ---- 存储后端：sqlite 零依赖；elasticsearch 需另装 ES ----
 STORAGE_BACKEND=sqlite
 SQLITE_PATH=${INSTALL_DIR}/data/siem.db
+SYSTEM_DB_PATH=${INSTALL_DIR}/data/system.db
 ES_RETENTION_DAYS=30
 
 # ---- 规则目录 ----
@@ -158,7 +161,15 @@ FRONTEND_DIST=${INSTALL_DIR}/frontend/dist
 
 # ---- 采集鉴权（务必修改）----
 AGENT_TOKEN=${token}
+# 第三方 API 静态令牌（可留空）；浏览器端请使用管理员账号登录
 API_TOKEN=
+
+# ---- 管理后台登录 ----
+ADMIN_USERNAME=admin
+# 首次启动后请尽快用 admin123 登录并修改密码；也可直接在此指定初始密码
+ADMIN_PASSWORD=
+JWT_SECRET=
+TOKEN_EXPIRE_HOURS=12
 
 # ---- GeoIP（有 mmdb 就填绝对路径，留空则跳过离线解析）----
 GEOIP_DB_PATH=
@@ -219,10 +230,12 @@ main() {
 
     log "部署完成！"
     echo "  访问地址 ： http://<服务器IP>:${SERVICE_PORT}/"
+    echo "  登录账号 ： admin / admin123（首次登录强制修改密码）"
     echo "  采集令牌 ： 见 ${INSTALL_DIR}/.env 中的 AGENT_TOKEN"
     echo "  查看状态 ： systemctl status mini-siem"
     echo "  查看日志 ： journalctl -u mini-siem -f"
     echo "  修改配置 ： 编辑 ${INSTALL_DIR}/.env 后执行 systemctl restart mini-siem"
+    echo "  忘记密码 ： cd ${INSTALL_DIR}/backend && ../venv/bin/python reset_admin.py"
     echo
     warn "如服务器有安全组/防火墙，请放行 TCP ${SERVICE_PORT} 端口"
 }

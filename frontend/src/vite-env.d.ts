@@ -4,8 +4,6 @@
 interface ImportMetaEnv {
   /** API 基础前缀，如 /api/v1 */
   readonly VITE_API_BASE?: string;
-  /** 默认访问令牌（对应后端 API_TOKEN） */
-  readonly VITE_API_TOKEN?: string;
 }
 
 interface ImportMeta {

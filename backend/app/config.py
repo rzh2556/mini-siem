@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     # 非空且目录存在时，由后端直接托管前端构建产物（可省掉 nginx 容器）
     frontend_dist: str = ""
 
+    # ---------- 管理后台账号与登录 ----------
+    # 首次启动时创建的管理员账号；初始密码取 admin_password，未配置时默认 admin123（首次登录强制修改）
+    admin_username: str = "admin"
+    admin_password: str = ""
+    # JWT 签名密钥：留空则在首次启动时随机生成并持久化到系统库
+    jwt_secret: str = ""
+    # 登录令牌有效期（小时）
+    token_expire_hours: int = 12
+    # 账号密码等系统数据使用的独立 SQLite 库（与日志存储后端无关）
+    system_db_path: str = "data/system.db"
+
     # ---------- 服务 ----------
     agent_token: str = "change-me-agent-token"
     api_token: str = ""

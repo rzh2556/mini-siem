@@ -13,6 +13,7 @@ from app.models.schemas import (
 )
 from app.normalize.parsers import build_event, guess_source_type
 from app.state import state
+from app.normalize.evtx_parser import is_evtx_content, parse_evtx
 
 router = APIRouter(prefix="/ingest", tags=["采集"])
 
@@ -80,11 +81,13 @@ def _decode_text(raw: bytes) -> str:
     return raw.decode("utf-8", errors="ignore")
 
 
-def _build_preview(host: str, source_type: str, lines: list[str]) -> list[UploadPreviewItem]:
-    """对文件头部若干行做解析预览，并标注命中的规则 ID。"""
+def _build_preview(host: str, source_type: str, events: list[IngestEvent]) -> list[UploadPreviewItem]:
+    """对前若干条事件做解析预览，并标注命中的规则 ID。"""
     preview: list[UploadPreviewItem] = []
-    for line in lines[:PREVIEW_SIZE]:
-        event = build_event(host, source_type, line)
+    for item in events[:PREVIEW_SIZE]:
+        event = build_event(host, source_type, item.raw, item.fields)
+        if item.timestamp:
+            event.timestamp = item.timestamp
         hits = state.engine.evaluate(event)
         preview.append(
             UploadPreviewItem(
@@ -92,21 +95,37 @@ def _build_preview(host: str, source_type: str, lines: list[str]) -> list[Upload
                 src_ip=event.src_ip,
                 user=event.user,
                 level=event.level,
-                message=(event.url or event.message or line)[:200],
+                message=(event.url or event.message or item.raw)[:200],
                 matched=[hit.rule.id for hit in hits],
             )
         )
     return preview
 
 
+async def _process_events(host: str, source_type: str, events: list[IngestEvent]) -> tuple[int, int]:
+    """分批把解析出的事件送入检测管道，返回 (入库数, 新增告警数)。"""
+    accepted = 0
+    alerts = 0
+    for index in range(0, len(events), UPLOAD_BATCH):
+        result = await state.pipeline.process(host, source_type, events[index : index + UPLOAD_BATCH])
+        accepted += result.accepted
+        alerts += result.alerts
+    return accepted, alerts
+
+
 @router.post("/upload", response_model=UploadResult, summary="上传日志文件并解析")
 async def upload_log_file(
-    file: UploadFile = File(..., description="日志文件，支持 .log/.txt 等文本文件"),
+    file: UploadFile = File(..., description="文本日志或 Windows .evtx 事件日志文件"),
     host: str = Form(default="upload", description="日志来源主机名"),
     source_type: str = Form(default="auto", description="日志类型，auto 表示自动识别"),
     _: None = Depends(require_api_token),
 ) -> UploadResult:
-    """接收上传的日志文件，按类型解析后送入检测管道，返回解析统计与结果预览。"""
+    """接收上传的日志文件，按类型解析后送入检测管道，返回解析统计与结果预览。
+
+    支持两类输入：
+    1. 文本日志（Nginx/Apache/SSH/Syslog 等），按行解析；
+    2. Windows 事件日志 .evtx 二进制文件，跨平台解析为结构化事件后按 Windows 规则检测。
+    """
     if source_type not in VALID_SOURCE_TYPES:
         raise HTTPException(status_code=400, detail=f"不支持的日志类型: {source_type}")
 
@@ -114,11 +133,41 @@ async def upload_log_file(
     if not raw:
         raise HTTPException(status_code=400, detail="文件内容为空")
 
+    filename = file.filename or "upload.log"
+
+    # ---------------- EVTX 分支：Windows 事件日志二进制 ----------------
+    if filename.lower().endswith(".evtx") or is_evtx_content(raw):
+        if source_type not in ("auto", "windows"):
+            raise HTTPException(status_code=400, detail="EVTX 文件的日志类型必须为 windows（或 auto）")
+        try:
+            parsed_events, skipped = parse_evtx(raw, MAX_UPLOAD_LINES)
+        except ImportError as exc:
+            raise HTTPException(status_code=500, detail="服务端缺少 python-evtx 依赖，无法解析 EVTX 文件") from exc
+        except Exception as exc:  # 文件整体无法识别时给出明确提示
+            raise HTTPException(status_code=400, detail=f"EVTX 文件解析失败：{exc}") from exc
+
+        events = [
+            IngestEvent(raw=item["raw"], fields=item["fields"], timestamp=item["timestamp"])
+            for item in parsed_events
+        ]
+        accepted, alerts = await _process_events(host, "windows", events)
+        return UploadResult(
+            filename=filename,
+            source_type="windows",
+            auto_detected=True,
+            total_lines=len(events) + skipped,
+            accepted=accepted,
+            skipped=skipped,
+            alerts=alerts,
+            preview=_build_preview(host, "windows", events),
+        )
+
+    # ---------------- 文本日志分支 ----------------
     text = _decode_text(raw)
     if "\x00" in text[:4000]:
         raise HTTPException(
             status_code=400,
-            detail="检测到二进制文件，Windows 事件日志(.evtx)请使用采集 Agent 采集",
+            detail="检测到不支持的二进制文件（仅支持文本日志与 Windows .evtx 事件日志）",
         )
 
     all_lines = text.splitlines()
@@ -126,20 +175,14 @@ async def upload_log_file(
     if not lines:
         raise HTTPException(status_code=400, detail="文件中没有有效的日志行")
 
-    filename = file.filename or "upload.log"
     auto_detected = source_type == "auto"
     resolved_type = guess_source_type(filename, text) if auto_detected else source_type
     if resolved_type == "unknown":
         resolved_type = "syslog"  # 无法识别时按通用 syslog 处理，解析器会自动尝试访问日志格式
 
     processed = lines[:MAX_UPLOAD_LINES]
-    accepted = 0
-    alerts = 0
-    for index in range(0, len(processed), UPLOAD_BATCH):
-        batch = [IngestEvent(raw=line) for line in processed[index : index + UPLOAD_BATCH]]
-        result = await state.pipeline.process(host, resolved_type, batch)
-        accepted += result.accepted
-        alerts += result.alerts
+    events = [IngestEvent(raw=line) for line in processed]
+    accepted, alerts = await _process_events(host, resolved_type, events)
 
     return UploadResult(
         filename=filename,
@@ -149,5 +192,5 @@ async def upload_log_file(
         accepted=accepted,
         skipped=len(all_lines) - len(processed),
         alerts=alerts,
-        preview=_build_preview(host, resolved_type, processed),
+        preview=_build_preview(host, resolved_type, events),
     )

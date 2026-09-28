@@ -54,6 +54,12 @@ services:
       - ES_RETENTION_DAYS=${ES_RETENTION_DAYS:-30}
       - AGENT_TOKEN=${AGENT_TOKEN:-change-me-agent-token}
       - API_TOKEN=${API_TOKEN:-}
+      # 管理后台：账号密码等系统数据保存在挂载的 data 卷内（system.db）
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - TOKEN_EXPIRE_HOURS=${TOKEN_EXPIRE_HOURS:-12}
+      - SYSTEM_DB_PATH=/app/data/system.db
       - RULES_DIR=/app/rules
       - RULES_RELOAD_INTERVAL=${RULES_RELOAD_INTERVAL:-60}
       - GEOIP_DB_PATH=${GEOIP_DB_PATH:-/app/geoip/GeoLite2-City.mmdb}

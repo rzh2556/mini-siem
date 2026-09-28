@@ -8,6 +8,8 @@ dist/
 build/
 *.log
 data/
+# 后台新增的自定义规则属于运行时数据，不随代码提交
+backend/rules/custom_managed.yml
 geoip/*.mmdb
 agent/state/
 .idea/

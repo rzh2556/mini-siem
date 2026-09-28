@@ -220,8 +220,9 @@ export default function UploadLogModal({ open, onClose, onSuccess }: UploadLogMo
       ) : (
         <>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-            支持 Nginx / Apache 访问与错误日志、SSH 认证日志、通用 Syslog 等文本日志；
-            Windows 事件日志（.evtx）请使用采集 Agent 上报。单个文件不超过 50MB。
+            支持两类文件：① Nginx / Apache / SSH / 通用 Syslog 等文本日志（.log/.txt）；
+            ② Windows 事件日志导出文件（.evtx，可直接从“事件查看器”导出后上传，将按 Windows 规则检测）。
+            单个文件不超过 50MB。
           </Typography.Paragraph>
 
           <Form<UploadForm> form={form} layout="vertical" initialValues={{ source_type: 'auto' }}>
@@ -234,12 +235,16 @@ export default function UploadLogModal({ open, onClose, onSuccess }: UploadLogMo
           </Form>
 
           <Upload.Dragger
-            accept=".log,.txt,.log.1,.out"
+            accept=".log,.txt,.log.1,.out,.evtx"
             maxCount={1}
             fileList={fileList}
             beforeUpload={(selected) => {
               setFile(selected);
               setFileList([selected]);
+              // EVTX 固定按 Windows 事件处理，自动纠正用户可能选错的日志类型
+              if (selected.name.toLowerCase().endsWith('.evtx')) {
+                form.setFieldValue('source_type', 'windows');
+              }
               return false;
             }}
             onRemove={() => {
@@ -250,7 +255,7 @@ export default function UploadLogModal({ open, onClose, onSuccess }: UploadLogMo
             disabled={uploading}
           >
             <p className="ant-upload-text">点击或拖拽日志文件到此处</p>
-            <p className="ant-upload-hint">仅支持单个文本日志文件，最大 50MB</p>
+            <p className="ant-upload-hint">支持文本日志与 Windows .evtx 事件文件，最大 50MB</p>
           </Upload.Dragger>
 
           {uploading ? (

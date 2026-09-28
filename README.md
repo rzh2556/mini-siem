@@ -27,12 +27,13 @@
 
 | 模块 | 能力 |
 | --- | --- |
-| 日志采集 | Agent 增量采集日志文件（支持轮转、断点续采），Windows 事件日志（Security/System，pywin32）；也支持 `curl` 直接推送原始文本 |
-| 归一化解析 | Nginx/Apache 访问与错误日志、SSH 认证日志（失败/成功/无效用户/sudo）、Syslog（RFC3164/5424）、Windows 事件 XML，统一为标准字段模型 |
-| 规则检测 | YAML 规则，支持正则/等值/包含/数值比较、`all_of`/`any_of` 组合、时间窗条件；三类规则：`match`（单条即告警）、`threshold`（窗口内 N 次计数）、`first_seen`（首次出现，识别陌生来源登录） |
+| 日志采集 | Agent 增量采集日志文件（支持轮转、断点续采），Windows 事件日志（Security/System，pywin32）；支持 `curl` 推送原始文本，**页面可直接上传 `.evtx` 事件日志文件**（自动解析 EventID/用户/源IP/进程等字段） |
+| 归一化解析 | Nginx/Apache 访问与错误日志、SSH 认证日志（失败/成功/无效用户/sudo）、Syslog（RFC3164/5424）、Windows 事件 XML / EVTX 二进制，统一为标准字段模型 |
+| 规则检测 | YAML 规则，支持正则/等值/包含/数值比较、`all_of`/`any_of` 组合、时间窗条件；三类规则：`match`（单条即告警）、`threshold`（窗口内 N 次计数）、`first_seen`（首次出现，识别陌生来源登录）；**内置规则 + 管理后台可视化新增/编辑/删除自定义规则** |
+| 账号与后台 | 管理员账号密码登录（PBKDF2-SHA256 加盐哈希 + JWT 会话），默认密码首次登录强制修改；所有页面与数据接口均需登录；后台可在线调整降噪参数、GeoIP、日志级别、CORS 并轮换采集令牌 |
 | 告警聚合降噪 | 冷却窗口内同规则同分组合并为一条告警并累加次数、IP 白名单、内网源抑制、最低等级过滤、样本留存 |
 | 可视化 | 指标卡、日志/告警趋势双轴折线图、等级分布、TOP 攻击源、TOP 规则、来源类型与主机分布、GeoIP 世界攻击地图 |
-| 运维 | systemd 裸机一键部署（低负载）或 Docker Compose、规则文件热加载、日志按保留期自动清理、健康检查接口 |
+| 运维 | systemd 裸机一键部署（低负载）或 Docker Compose、规则文件热加载、日志按保留期自动清理、健康检查接口、`reset_admin.py` 密码重置工具 |
 
 ## 二、技术栈
 
@@ -114,7 +115,7 @@ echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf   # 永久生效
 ```bash
 git clone <你的仓库地址> mini-siem && cd mini-siem
 cp .env.example .env
-vim .env          # 必须修改 AGENT_TOKEN；公网部署建议同时设置 API_TOKEN
+vim .env          # 必须修改 AGENT_TOKEN；ADMIN_PASSWORD 可在此预设（留空则首登用 admin123 并强制修改）
 docker compose up -d --build
 ```
 
@@ -134,7 +135,18 @@ docker compose logs -f backend      # 观察就绪日志
 | `http://<服务器IP>:8000/docs` | 后端 Swagger API 文档 |
 | `http://127.0.0.1:9200` | Elasticsearch（仅本机可访问，仅启用 es profile 时存在） |
 
-### 4. 推送演示数据验证
+### 4. 首次登录
+
+浏览器打开控制台后会跳转登录页，使用默认账号 **admin / admin123** 登录，**首次登录强制修改密码**（至少 8 位）。密码以 PBKDF2-SHA256 加盐哈希保存在系统库 `data/system.db` 中；忘记密码可在服务器执行：
+
+```bash
+cd /opt/mini-siem/backend          # Docker 部署可忽略本方式
+../venv/bin/python reset_admin.py  # 随机生成新密码；也可跟参数直接指定
+```
+
+如需在首次部署前自定义初始账号/密码，在 `.env` 中设置 `ADMIN_USERNAME`、`ADMIN_PASSWORD`（见 `.env.example`）。
+
+### 5. 推送演示数据验证
 
 ```bash
 python3 scripts/generate_demo_logs.py --url http://127.0.0.1:8000 --token <你的AGENT_TOKEN>
@@ -213,23 +225,36 @@ tail -n 100 /var/log/nginx/access.log | \
 
 控制台「日志检索」页右上角的 **上传日志文件** 按钮可直接选择本地日志文件上传，自动识别类型、解析入库并展示命中规则，适用于导入历史日志或排查离线样本。
 
-也可用命令行上传：
+支持两类文件：
+
+- **文本日志**：Nginx/Apache/SSH/Syslog/Windows 事件 XML 等纯文本，按行解析；
+- **Windows EVTX 事件文件（`.evtx`，二进制）**：从「事件查看器」中右键日志类别 →「将所有事件另存为」得到；后端解析二进制记录后自动提取 EventID、等级、通道、计算机名、事件时间，以及 `SubjectUserName`/`TargetUserName`（用户）、`IpAddress`（源 IP）、进程名与命令行等字段，命中规则同样产生告警。
+
+也可用命令行上传（文本与 `.evtx` 相同接口）：
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/v1/ingest/upload" \
-     -H "Authorization: Bearer <你的API_TOKEN>" \
-     -F "file=@/var/log/nginx/access.log" \
-     -F "host=web-01" \
+     -H "Authorization: Bearer <登录JWT或API_TOKEN>" \
+     -F "file=@/tmp/security.evtx" \
+     -F "host=dc-01" \
      -F "source_type=auto"      # auto 表示自动识别，也可指定 nginx/apache/ssh/linux/windows/syslog
 ```
 
 返回字段：`filename`、`source_type`（实际使用的类型）、`auto_detected`（是否为自动识别）、`total_lines`、`accepted`（入库条数）、`skipped`（超出上限被跳过条数）、`alerts`（新增告警数）、`preview`（前 5 条解析结果与命中规则）。
 
-限制与说明：单文件最大 50MB、最多解析 20 万行（超出部分计入 `skipped`），建议按天切分后分批上传；日志编码自动兼容 UTF-8 / GBK / UTF-16；Windows 事件日志（`.evtx`）为二进制格式，请使用采集 Agent 上报。
+限制与说明：单文件最大 50MB、最多解析 20 万行/条记录（超出部分计入 `skipped`），建议按天切分后分批上传；文本日志编码自动兼容 UTF-8 / GBK / UTF-16；`.evtx` 损坏或非事件日志文件会返回 400 错误。
 
 ## 五、检测规则
 
 规则文件位于 `backend/rules/*.yml`，通过 `./backend/rules` 目录挂载进容器，**修改后 60 秒内自动热加载**，也可在「规则管理」页点击“重新加载规则文件”立即生效。
+
+### 在管理后台维护规则
+
+「规则管理」页提供可视化规则编辑器，无需手写 YAML：
+
+- **新增规则**：点击「新增规则」，填写基本信息（ID 仅允许小写字母/数字/`-`/`_`）、适用日志类型，用条件构造器添加 `all_of`/`any_of` 条件，并按需配置阈值、首次出现、抑制参数；
+- **编辑/删除**：自定义规则（`custom_managed.yml` 持久化）可随时编辑或删除；**内置规则为只读基线，不可修改或删除**（列表中以「内置」标识）；
+- 保存后立即重载生效，可在列表中看到每条规则的来源（内置/自定义）与命中次数。
 
 ### 规则示例
 
@@ -283,8 +308,13 @@ suppression:
 | `FRONTEND_DIST` | 空 | 前端构建产物目录，非空且存在时由后端直接托管前端（免装 nginx） |
 | `ES_URL` | `http://elasticsearch:9200` | Elasticsearch 地址（`STORAGE_BACKEND=elasticsearch` 时生效） |
 | `ES_RETENTION_DAYS` | `30` | 日志保留天数，超期自动清理（两种后端都生效） |
-| `AGENT_TOKEN` | `change-me-agent-token` | Agent 上报令牌，**必须修改** |
-| `API_TOKEN` | 空 | 控制台/API 访问令牌，留空则不校验 |
+| `AGENT_TOKEN` | `change-me-agent-token` | Agent 上报令牌（`X-Agent-Token`），**必须修改**；也可在后台重新生成 |
+| `API_TOKEN` | 空 | 第三方调用数据/上传接口的静态 Bearer 令牌（可选）；浏览器端始终使用管理员登录，与此无关 |
+| `ADMIN_USERNAME` | `admin` | 管理员账号，首次启动时自动创建 |
+| `ADMIN_PASSWORD` | 空 | 管理员初始密码，留空为 `admin123`（首次登录强制改密）；修改密码后以系统库为准 |
+| `JWT_SECRET` | 空 | JWT 签名密钥，留空则首次启动随机生成并持久化到系统库 |
+| `TOKEN_EXPIRE_HOURS` | `12` | 登录令牌有效期（小时） |
+| `SYSTEM_DB_PATH` | `data/system.db` | 账号、密码、后台配置的独立系统库路径 |
 | `GEOIP_DB_PATH` | `/app/geoip/GeoLite2-City.mmdb` | GeoLite2 离线库路径 |
 | `GEOIP_ONLINE_FALLBACK` | `true` | 无离线库时是否使用 ip-api.com 在线解析 |
 | `ALERT_COOLDOWN` | `300` | 全局告警合并窗口（秒） |
@@ -313,6 +343,8 @@ docker compose up -d
 ```
 
 > 规则文件（`rules/*.yml`）**不需要重启**，保存后 60 秒内自动热加载；也可在「规则管理」页点“重新加载规则文件”立即生效。
+>
+> 常用降噪与运行参数（保留天数、冷却、最低等级、白名单、内网抑制、GeoIP 在线开关、日志级别等）也可直接在「系统设置」页修改，**保存即热生效，无需重启**；仅 `CORS_ORIGINS`、`GEOIP_DB_PATH` 等少数启动项需要重启。
 
 ### 7.3 常见配置改法
 
@@ -341,7 +373,7 @@ SQLITE_PATH=/opt/mini-siem/data/siem.db
 
 **③ 调整日志保留天数**：`ES_RETENTION_DAYS=30`（两种后端都生效，后台每小时清理一次过期日志，告警不会被清理）。
 
-**④ 加固访问**：把 `AGENT_TOKEN` 改成随机长字符串；公网部署再设置 `API_TOKEN`，之后访问控制台需带该令牌。
+**④ 加固访问**：浏览器端必须使用管理员账号登录（JWT 会话，默认 12 小时过期），首次登录请立刻改掉 `admin123` 默认密码；把 `AGENT_TOKEN` 改成随机长字符串（或在「系统设置」页重新生成）；需要给脚本/第三方系统开放查询与上传接口时，再设置 `API_TOKEN` 作为静态 Bearer 令牌。
 
 **⑤ 减少误报**：`IP_WHITELIST` 为**精确 IP 匹配**（不支持网段），例如 `IP_WHITELIST=127.0.0.1,::1,47.98.10.20`；若整片内网都不需要告警，直接设 `IGNORE_INTERNAL_SRC=true` 只关注外网攻击。规则级还可用 `suppression.ignore_ips` 单独豁免。
 
@@ -373,8 +405,10 @@ git pull && docker compose up -d --build
 
 ```bash
 # 备份：停服务后复制数据库文件（WAL 模式下 -wal/-shm 也要一起复制）
+# system.db 保存管理员账号与后台配置，建议一并备份
 sudo systemctl stop mini-siem
 sudo cp /opt/mini-siem/data/siem.db* /root/siem-backup-$(date +%F)/
+sudo cp /opt/mini-siem/data/system.db* /root/siem-backup-$(date +%F)/
 sudo systemctl start mini-siem
 
 # 恢复：把备份文件放回 data/ 目录后重启即可
@@ -394,14 +428,24 @@ sudo systemctl start mini-siem
 | --- | --- | --- |
 | POST | `/api/v1/ingest` | 批量上报日志（需 `X-Agent-Token`） |
 | POST | `/api/v1/ingest/raw` | 上报纯文本日志（每行一条） |
-| POST | `/api/v1/ingest/upload` | 上传日志文件并解析入库（multipart，需控制台令牌） |
+| POST | `/api/v1/ingest/upload` | 上传文本日志或 `.evtx` 文件并解析入库（multipart，需登录 JWT 或 `API_TOKEN`） |
+| POST | `/api/v1/auth/login` | 管理员登录，返回 JWT（默认 admin/admin123，首登强制改密） |
+| GET | `/api/v1/auth/me` | 获取当前登录用户 |
+| POST | `/api/v1/auth/change-password` | 修改自身密码 |
+| GET | `/api/v1/admin/settings` | 读取可在线编辑的运行参数与只读部署信息 |
+| PUT | `/api/v1/admin/settings` | 更新运行参数（降噪/GeoIP/日志级别/CORS 等） |
+| POST | `/api/v1/admin/agent-token/regenerate` | 重新生成 Agent 采集令牌 |
+| GET | `/api/v1/admin/system` | 系统运行信息（版本/Python/CPU/内存/磁盘/运行时长） |
 | GET | `/api/v1/logs/search` | 多条件日志检索（全文/类型/主机/IP/等级/命中规则/时间） |
 | GET | `/api/v1/logs/filters` | 获取筛选项（类型、主机、等级） |
 | GET | `/api/v1/alerts` | 告警列表（状态/等级/规则/源IP/关键词/时间） |
 | GET | `/api/v1/alerts/{id}` | 告警详情（含原始日志样本） |
 | PATCH | `/api/v1/alerts/{id}` | 更新告警状态与备注 |
 | POST | `/api/v1/alerts/bulk` | 批量更新告警状态 |
-| GET | `/api/v1/rules` | 规则列表 |
+| GET | `/api/v1/rules` | 规则列表（含内置/自定义来源标识） |
+| POST | `/api/v1/rules` | 新增自定义规则（管理员） |
+| PUT | `/api/v1/rules/{id}` | 修改自定义规则（管理员，内置规则不可改） |
+| DELETE | `/api/v1/rules/{id}` | 删除自定义规则（管理员，内置规则不可删） |
 | PATCH | `/api/v1/rules/{id}` | 在线启停规则 / 调整等级与阈值 |
 | POST | `/api/v1/rules/reload` | 重新加载规则文件 |
 | GET | `/api/v1/stats/overview` | 总览指标与 TOP 排行 |
@@ -422,16 +466,21 @@ mini-siem/
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
+│   ├── reset_admin.py           # 管理员密码重置工具
 │   ├── rules/                    # 检测规则（挂载进容器，支持热加载）
 │   │   ├── ssh_auth.yml
 │   │   ├── web_attacks.yml
-│   │   └── windows_events.yml
+│   │   ├── windows_events.yml
+│   │   └── custom_managed.yml    # 后台新增的自定义规则（运行后生成）
 │   └── app/
 │       ├── main.py               # 应用入口、后台维护任务、前端静态托管
 │       ├── config.py             # 配置（存储后端开关等）
 │       ├── state.py              # 全局单例容器
-│       ├── api/                  # ingest / logs / alerts / rules / stats
-│       ├── normalize/parsers.py  # 各来源日志归一化解析
+│       ├── api/                  # auth / admin / ingest / logs / alerts / rules / stats
+│       ├── system/store.py       # 账号、密码哈希、JWT、系统配置存储
+│       ├── normalize/
+│       │   ├── parsers.py        # 各来源文本日志归一化解析
+│       │   └── evtx_parser.py    # Windows .evtx 二进制解析
 │       ├── engine/               # rule_loader / matcher / aggregator / pipeline / geoip
 │       ├── models/schemas.py     # 数据模型
 │       └── storage/              # 可插拔存储层
@@ -458,6 +507,17 @@ mini-siem/
 **SQLite 后端能撑多少数据**
 单机建议日志总量控制在百万级以内；默认保留 30 天，可通过 `ES_RETENTION_DAYS` 调整。数据量继续增长时再切换 Elasticsearch 后端，接口完全一致、无需改代码。
 
+**忘记管理员密码**
+在服务器执行重置脚本（会自动读取部署目录 `.env` 定位系统库）：
+
+```bash
+cd /opt/mini-siem/backend
+../venv/bin/python reset_admin.py            # 随机生成新密码并打印
+../venv/bin/python reset_admin.py 新密码内容  # 或直接指定（至少 8 位）
+```
+
+Docker 部署可进入容器执行：`docker compose exec backend python reset_admin.py`。
+
 **告警迟迟不出现**
 频率类规则需要达到阈值（例如 SSH 暴力破解 300 秒内 5 次）；另外检查 `.env` 的 `MIN_ALERT_SEVERITY` 是否把低等级告警过滤掉了。
 
@@ -469,7 +529,7 @@ mini-siem/
 
 ## 十二、安全加固建议
 
-1. 修改默认 `AGENT_TOKEN`，并设置 `API_TOKEN` 防止控制台被未授权访问。
+1. 首次登录后立即修改默认密码 `admin123`；修改默认 `AGENT_TOKEN`；仅在确有第三方系统对接需要时设置 `API_TOKEN`。
 2. 生产环境请前置 HTTPS（裸机部署可用 Nginx 或 Caddy 反代 8000 端口），或只通过内网/VPN 暴露控制台端口。
 3. 若启用了 Elasticsearch，其端口已在编排中限制为 `127.0.0.1` 访问，请勿改为 `0.0.0.0`。
 4. 远程 Agent 上报建议走内网或专用通道，避免令牌在公网明文传输。

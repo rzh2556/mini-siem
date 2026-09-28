@@ -1,6 +1,7 @@
 """API 通用工具：鉴权依赖、时间解析、查询构造。"""
 from __future__ import annotations
 
+import hmac
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 from fastapi import Header, HTTPException, status
 
 from app.config import settings
+from app.state import state
 
 RELATIVE_RE = re.compile(r"^(?P<num>\d+)(?P<unit>[smhd])$")
 UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -45,16 +47,37 @@ def parse_page(size: int, maximum: int = 200) -> int:
     return max(1, min(size, maximum))
 
 
+def _bearer_token(authorization: str) -> str:
+    """从 Authorization 头中提取 Bearer 令牌。"""
+    return authorization.removeprefix("Bearer").strip()
+
+
 async def require_agent_token(x_agent_token: str = Header(default="")) -> None:
-    """校验 Agent 上报令牌。"""
-    if settings.agent_token and x_agent_token != settings.agent_token:
+    """校验 Agent 上报令牌（与后台登录账号相互独立）。"""
+    if settings.agent_token and not hmac.compare_digest(x_agent_token or "", settings.agent_token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Agent 令牌无效")
 
 
-async def require_api_token(authorization: str = Header(default="")) -> None:
-    """校验前端/API 访问令牌（未配置时放行）。"""
-    if not settings.api_token:
-        return
-    token = authorization.removeprefix("Bearer").strip()
-    if token != settings.api_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="访问令牌无效")
+async def require_admin(authorization: str = Header(default="")) -> str:
+    """要求管理员登录：校验 JWT，返回登录用户名。"""
+    token = _bearer_token(authorization)
+    if not token or state.system is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
+    username = state.system.verify_token(token)
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已过期，请重新登录"
+        )
+    return username
+
+
+async def require_api_token(authorization: str = Header(default="")) -> str:
+    """前端/API 访问鉴权：接受管理员登录 JWT，或配置的静态 API_TOKEN。"""
+    token = _bearer_token(authorization)
+    if token and state.system is not None:
+        username = state.system.verify_token(token)
+        if username:
+            return username
+    if settings.api_token and token and hmac.compare_digest(token, settings.api_token):
+        return "__api_token__"
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录或提供有效的访问令牌")

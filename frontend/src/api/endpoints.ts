@@ -5,8 +5,12 @@ import type {
   AlertQuery,
   AlertStatus,
   AttackersResponse,
+  CurrentUser,
+  EditableSettings,
   GeoResponse,
   HealthResponse,
+  LoginRequest,
+  LoginResponse,
   LogEvent,
   LogFilters,
   LogQuery,
@@ -14,7 +18,11 @@ import type {
   PageResult,
   Rule,
   RulesResponse,
+  RuleSavePayload,
   RuleUpdatePayload,
+  SettingsResponse,
+  SettingsSaveResponse,
+  SystemInfo,
   TimelineResponse,
   UploadResult,
 } from './types';
@@ -129,6 +137,73 @@ export async function updateRule(id: string, payload: RuleUpdatePayload): Promis
 /** 触发后端重新加载规则文件，返回加载条数。 */
 export async function reloadRules(): Promise<{ loaded: number }> {
   const { data } = await client.post<{ loaded: number }>('/rules/reload');
+  return data;
+}
+
+/** 新增一条自定义规则。 */
+export async function createRule(payload: RuleSavePayload): Promise<Rule> {
+  const { data } = await client.post<Rule>('/rules', payload);
+  return data;
+}
+
+/** 整体更新一条自定义规则。 */
+export async function replaceRule(id: string, payload: RuleSavePayload): Promise<Rule> {
+  const { data } = await client.put<Rule>(`/rules/${id}`, payload);
+  return data;
+}
+
+/** 删除一条自定义规则。 */
+export async function removeRule(id: string): Promise<{ deleted: boolean }> {
+  const { data } = await client.delete<{ deleted: boolean }>(`/rules/${id}`);
+  return data;
+}
+
+/** 管理员登录，返回 JWT 与账号信息。 */
+export async function login(payload: LoginRequest): Promise<LoginResponse> {
+  const { data } = await client.post<LoginResponse>('/auth/login', payload);
+  return data;
+}
+
+/** 查询当前登录用户，用于校验本地令牌是否仍有效。 */
+export async function fetchMe(): Promise<CurrentUser> {
+  const { data } = await client.get<CurrentUser>('/auth/me');
+  return data;
+}
+
+/** 修改当前账号密码。 */
+export async function changePassword(payload: {
+  old_password: string;
+  new_password: string;
+}): Promise<{ message: string }> {
+  const { data } = await client.post<{ message: string }>('/auth/change-password', payload);
+  return data;
+}
+
+/** 获取系统运行参数。 */
+export async function fetchSettings(): Promise<SettingsResponse> {
+  const { data } = await client.get<SettingsResponse>('/admin/settings');
+  return data;
+}
+
+/** 保存系统运行参数（仅提交变化项）。 */
+export async function saveSettings(
+  payload: Partial<EditableSettings>,
+): Promise<SettingsSaveResponse> {
+  const { data } = await client.put<SettingsSaveResponse>('/admin/settings', payload);
+  return data;
+}
+
+/** 重新生成 Agent 采集令牌。 */
+export async function regenerateAgentToken(): Promise<{ agent_token: string; message: string }> {
+  const { data } = await client.post<{ agent_token: string; message: string }>(
+    '/admin/agent-token/regenerate',
+  );
+  return data;
+}
+
+/** 获取系统信息。 */
+export async function fetchSystemInfo(): Promise<SystemInfo> {
+  const { data } = await client.get<SystemInfo>('/admin/system');
   return data;
 }
 

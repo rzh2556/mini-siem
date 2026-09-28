@@ -253,6 +253,8 @@ export interface Rule {
   first_seen_lookback?: number | null;
   suppression?: SuppressionConfig | null;
   enabled_source?: string | null;
+  /** 是否为后台新增的自定义规则（内置规则不可删除/整体修改） */
+  managed?: boolean;
 }
 
 /** 规则列表响应 */
@@ -267,6 +269,88 @@ export interface RuleUpdatePayload {
   enabled?: boolean;
   severity?: Severity;
   threshold?: ThresholdConfig;
+}
+
+/** 规则创建/整体更新入参与规则实体一致（managed 等运行期字段由后端忽略） */
+export type RuleSavePayload = Rule;
+
+/** 管理员登录入参 */
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+/** 登录成功响应 */
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  expires_at: string;
+  username: string;
+  /** 是否必须先修改默认密码 */
+  must_change_password: boolean;
+}
+
+/** 当前登录用户 */
+export interface CurrentUser {
+  username: string;
+}
+
+/** 后台可编辑的运行参数 */
+export interface EditableSettings {
+  es_retention_days: number;
+  alert_cooldown: number;
+  min_alert_severity: Severity;
+  ip_whitelist: string;
+  ignore_internal_src: boolean;
+  geoip_online_fallback: boolean;
+  geoip_db_path: string;
+  log_level: string;
+  cors_origins: string;
+  api_token: string;
+  agent_token: string;
+  rules_reload_interval: number;
+}
+
+/** 只读部署参数 */
+export interface ReadOnlySettings {
+  storage_backend: string;
+  sqlite_path: string;
+  es_url: string;
+  frontend_dist: string;
+  rules_dir: string;
+  system_db_path: string;
+  admin_username: string;
+  token_expire_hours: number;
+}
+
+/** 系统设置查询响应 */
+export interface SettingsResponse {
+  editable: EditableSettings;
+  read_only: ReadOnlySettings;
+  restart_required_keys: string[];
+}
+
+/** 系统设置保存响应 */
+export interface SettingsSaveResponse {
+  message: string;
+  restart_required: boolean;
+  editable: EditableSettings;
+}
+
+/** 系统信息 */
+export interface SystemInfo {
+  version: string;
+  hostname: string;
+  platform: string;
+  python: string;
+  backend: string;
+  storage_ok: boolean;
+  rules_loaded: number;
+  rules_enabled: number;
+  uptime_seconds: number;
+  business_db_bytes: number;
+  system_db_bytes: number;
+  server_time: string;
 }
 
 /** 告警列表查询参数 */

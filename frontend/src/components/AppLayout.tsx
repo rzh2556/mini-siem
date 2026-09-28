@@ -1,19 +1,31 @@
-/** 应用整体布局：左侧导航栏（平台名称 + 后端健康状态）与右侧内容区。 */
+/** 应用整体布局：左侧导航栏（平台名称 + 后端健康状态 + 当前用户）与右侧内容区。 */
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Badge, Button, Input, Layout, Menu, Modal, Tooltip, Typography, message } from 'antd';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Badge,
+  Dropdown,
+  Layout,
+  Menu,
+  Space,
+  Tooltip,
+  Typography,
+} from 'antd';
 import {
   AlertOutlined,
   DashboardOutlined,
   FileSearchOutlined,
   GlobalOutlined,
+  KeyOutlined,
+  LogoutOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   SlidersOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
-import { fetchHealth } from '../api/endpoints';
-import { loadStoredToken, saveToken } from '../api/client';
+import { fetchHealth, fetchMe } from '../api/endpoints';
+import { clearToken } from '../api/client';
+import ChangePasswordModal from './ChangePasswordModal';
 import type { HealthResponse } from '../api/types';
 
 /** 侧边导航菜单项 */
@@ -23,6 +35,7 @@ const MENU_ITEMS = [
   { key: '/alerts', icon: <AlertOutlined />, label: <Link to="/alerts">告警中心</Link> },
   { key: '/logs', icon: <FileSearchOutlined />, label: <Link to="/logs">日志检索</Link> },
   { key: '/rules', icon: <SlidersOutlined />, label: <Link to="/rules">规则管理</Link> },
+  { key: '/admin', icon: <SettingOutlined />, label: <Link to="/admin">系统设置</Link> },
 ];
 
 /** 布局属性 */
@@ -34,12 +47,13 @@ interface AppLayoutProps {
 /** 渲染应用框架：左侧固定导航 + 顶部标题健康状态 + 内容区。 */
 export default function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthFailed, setHealthFailed] = useState(false);
-  const [tokenOpen, setTokenOpen] = useState(false);
-  const [tokenDraft, setTokenDraft] = useState('');
+  const [username, setUsername] = useState('');
+  const [passwordOpen, setPasswordOpen] = useState(false);
 
-  /** 拉取后端健康状态，失败时标记为不可用 */
+  /** 拉取后端健康状态与当前登录用户 */
   const loadHealth = useCallback(() => {
     fetchHealth()
       .then((data) => {
@@ -50,6 +64,9 @@ export default function AppLayout({ children }: AppLayoutProps) {
         setHealth(null);
         setHealthFailed(true);
       });
+    fetchMe()
+      .then((user) => setUsername(user.username))
+      .catch(() => undefined);
   }, []);
 
   // 每 30 秒轮询一次健康状态，组件卸载时清除定时器
@@ -70,23 +87,31 @@ export default function AppLayout({ children }: AppLayoutProps) {
     if (health.status === 'ok') {
       return { status: 'success' as const, text: '服务正常' };
     }
-    return { status: 'warning' as const, text: '服务降级（ES 未连接）' };
+    return { status: 'warning' as const, text: '服务降级（存储未连接）' };
   };
 
   const badge = healthBadge();
 
-  /** 打开令牌设置弹窗并回填当前值 */
-  const openTokenModal = () => {
-    setTokenDraft(loadStoredToken());
-    setTokenOpen(true);
+  /** 退出登录：清除本地令牌并回到登录页 */
+  const handleLogout = () => {
+    clearToken();
+    navigate('/login', { replace: true });
   };
 
-  /** 保存令牌到 localStorage 并刷新健康状态 */
-  const handleTokenSave = () => {
-    saveToken(tokenDraft);
-    setTokenOpen(false);
-    message.success(tokenDraft.trim() ? '访问令牌已保存' : '访问令牌已清除');
-    loadHealth();
+  /** 用户下拉菜单 */
+  const userMenu = {
+    items: [
+      { key: 'password', icon: <KeyOutlined />, label: '修改密码' },
+      { type: 'divider' as const },
+      { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
+    ],
+    onClick: ({ key }: { key: string }) => {
+      if (key === 'password') {
+        setPasswordOpen(true);
+      } else if (key === 'logout') {
+        handleLogout();
+      }
+    },
   };
 
   /** 选中菜单项 */
@@ -130,9 +155,14 @@ export default function AppLayout({ children }: AppLayoutProps) {
         />
 
         <div className="app-sider__footer">
-          <Button type="text" block icon={<SettingOutlined />} onClick={openTokenModal}>
-            设置访问令牌
-          </Button>
+          <Dropdown menu={userMenu} placement="topRight" trigger={['click']}>
+            <div className="app-user" role="button" tabIndex={0}>
+              <Space>
+                <UserOutlined />
+                <Typography.Text className="app-user__name">{username || '管理员'}</Typography.Text>
+              </Space>
+            </div>
+          </Dropdown>
           <Typography.Text type="secondary" className="app-sider__version">
             {health ? `v${health.version}` : 'v-'}
           </Typography.Text>
@@ -141,25 +171,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
       <Layout.Content className="app-content">{children}</Layout.Content>
 
-      <Modal
-        title="设置访问令牌"
-        open={tokenOpen}
-        onOk={handleTokenSave}
-        onCancel={() => setTokenOpen(false)}
-        okText="保存"
-        cancelText="取消"
-        destroyOnClose
-      >
-        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-          令牌将保存在浏览器 localStorage 中，请求时以 Authorization: Bearer 头发送。留空表示后端未开启鉴权。
-        </Typography.Paragraph>
-        <Input.Password
-          placeholder="请输入后端 API_TOKEN"
-          value={tokenDraft}
-          onChange={(event) => setTokenDraft(event.target.value)}
-          allowClear
-        />
-      </Modal>
+      <ChangePasswordModal open={passwordOpen} onClose={() => setPasswordOpen(false)} />
     </Layout>
   );
 }
