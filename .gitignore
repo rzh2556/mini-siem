@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+node_modules/
+dist/
+build/
+*.log
+data/
+geoip/*.mmdb
+agent/state/
+.idea/
+.vscode/
+.DS_Store

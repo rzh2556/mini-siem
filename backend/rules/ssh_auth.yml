@@ -1,0 +1,128 @@
+# SSH / Linux 认证日志检测规则
+# 覆盖场景：SSH 暴力破解、用户名枚举、异常登录（新来源、非工作时间）、提权失败
+rules:
+  - id: ssh-bruteforce
+    name: SSH 暴力破解
+    description: "源 IP {src_ip} 在 300 秒内对 {host} 连续 SSH 登录失败 {count} 次，疑似暴力破解"
+    severity: high
+    type: threshold
+    log_types: [ssh, linux, syslog]
+    tags: [attack.bruteforce, T1110, ssh]
+    all_of:
+      - field: raw
+        regex: "Failed (?:password|publickey|none) for (?:invalid user )?(?P<user>\\S+) from (?P<src_ip>[0-9a-fA-F:.]+)"
+    threshold:
+      count: 5
+      window: 300
+      group_by: [src_ip]
+    suppression:
+      cooldown: 900
+
+  - id: ssh-invalid-user-scan
+    name: SSH 用户名枚举
+    description: "源 IP {src_ip} 短时间内尝试大量无效用户名（{count} 次），疑似账号爆破/枚举"
+    severity: medium
+    type: threshold
+    log_types: [ssh, linux, syslog]
+    tags: [attack.bruteforce, discovery, T1110.001]
+    all_of:
+      - field: raw
+        regex: "(?:Invalid user|Failed password for invalid user) (?P<user>\\S+) from (?P<src_ip>[0-9a-fA-F:.]+)"
+    threshold:
+      count: 10
+      window: 300
+      group_by: [src_ip]
+    suppression:
+      cooldown: 900
+
+  - id: ssh-root-login-success
+    name: root 账号远程登录成功
+    description: "检测到 root 账号从 {src_ip} 成功登录 {host}，请确认是否为授权操作"
+    severity: medium
+    type: match
+    log_types: [ssh, linux, syslog]
+    tags: [auth.success, privileged-account]
+    all_of:
+      - field: raw
+        regex: "Accepted (?:password|publickey|keyboard-interactive/\\S+) for root from (?P<src_ip>[0-9a-fA-F:.]+)"
+    suppression:
+      cooldown: 600
+
+  - id: ssh-login-new-source
+    name: 异常登录-陌生来源 IP
+    description: "账号 {user} 首次从 {src_ip} 成功登录，属于历史未出现过的来源（近 30 天）"
+    severity: medium
+    type: first_seen
+    log_types: [ssh, linux, syslog]
+    tags: [auth.abnormal, T1078]
+    first_seen_field: src_ip
+    first_seen_lookback: 2592000
+    all_of:
+      - field: raw
+        regex: "Accepted (?:password|publickey|keyboard-interactive/\\S+) for (?P<user>\\S+) from (?P<src_ip>[0-9a-fA-F:.]+)"
+    threshold:
+      group_by: [src_ip]
+    suppression:
+      cooldown: 3600
+
+  - id: ssh-login-off-hours
+    name: 异常登录-非工作时间
+    description: "账号 {user} 在非工作时间从 {src_ip} 成功登录 {host}"
+    severity: medium
+    type: match
+    log_types: [ssh, linux, syslog]
+    tags: [auth.abnormal, T1078]
+    time_window:
+      start: "08:00"
+      end: "20:00"
+      mode: outside
+    all_of:
+      - field: raw
+        regex: "Accepted (?:password|publickey|keyboard-interactive/\\S+) for (?P<user>\\S+) from (?P<src_ip>[0-9a-fA-F:.]+)"
+    suppression:
+      cooldown: 1800
+
+  - id: ssh-sudo-failure
+    name: sudo 提权失败
+    description: "账号 {user} 在 {host} 上 sudo 认证失败，可能存在权限提升尝试"
+    severity: medium
+    type: threshold
+    log_types: [ssh, linux, syslog]
+    tags: [privilege-escalation, T1548.003]
+    all_of:
+      - field: raw
+        regex: "sudo.*authentication failure.*user=(?P<user>\\S+)"
+    threshold:
+      count: 3
+      window: 300
+      group_by: [user, host]
+    suppression:
+      cooldown: 900
+
+  - id: linux-user-created
+    name: 新建系统账号
+    description: "检测到 {host} 上新增系统账号（{user}），请确认是否为授权变更"
+    severity: medium
+    type: match
+    log_types: [linux, syslog, ssh]
+    tags: [persistence, T1136.001]
+    all_of:
+      - field: raw
+        regex: "(?:useradd|adduser)(?:\\[\\d+\\])?: new user: name=(?P<user>\\S+)"
+    suppression:
+      cooldown: 600
+
+  - id: linux-authorized-keys-modified
+    name: SSH 免密公钥被修改
+    description: "检测到 {host} 的 authorized_keys 文件发生变化，可能是后门植入"
+    severity: high
+    type: match
+    log_types: [linux, syslog]
+    tags: [persistence, T1098.004]
+    all_of:
+      - field: raw
+        regex: "authorized_keys|\\.ssh/key"
+      - field: raw
+        regex: "(?:CHANGED|modified|写入|changed)"
+    suppression:
+      cooldown: 600

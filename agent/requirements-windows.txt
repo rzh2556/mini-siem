@@ -1,0 +1,5 @@
+# Windows 平台事件日志采集依赖
+# Linux 平台无需安装任何依赖（仅使用标准库）
+# 建议同时安装 PyYAML 以便使用 YAML 配置
+pywin32>=306
+PyYAML>=6.0

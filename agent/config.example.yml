@@ -1,0 +1,52 @@
+# Mini SIEM 采集 Agent 配置示例
+# Linux 常用日志路径：
+#   SSH 认证日志: /var/log/auth.log (Debian/Ubuntu) 或 /var/log/secure (CentOS/RHEL)
+#   Nginx 日志:   /var/log/nginx/access.log, /var/log/nginx/error.log
+#   Apache 日志:  /var/log/apache2/access.log, /var/log/httpd/access_log
+
+server:
+  # 服务端地址（Docker 部署默认前端端口 80，也可直连后端 8000）
+  url: http://127.0.0.1:8000
+  # 与服务端 .env 中 AGENT_TOKEN 保持一致
+  token: change-me-agent-token
+  # 采集主机名，留空则使用系统主机名
+  host: ""
+  # 采集间隔（秒）
+  interval: 5
+  # 单次上报最大条数
+  batch_size: 500
+
+sources:
+  # ---------------- Linux 示例 ----------------
+  - name: linux-ssh-auth
+    enabled: true
+    source_type: ssh
+    path: /var/log/auth.log
+
+  - name: nginx-access
+    enabled: true
+    source_type: nginx
+    path: /var/log/nginx/access.log
+
+  - name: nginx-error
+    enabled: true
+    source_type: nginx
+    path: /var/log/nginx/error.log
+
+  - name: apache-access
+    enabled: false
+    source_type: apache
+    path: /var/log/apache2/access.log
+
+  # ---------------- Windows 示例（需安装 pywin32） ----------------
+  - name: windows-security
+    enabled: false
+    source_type: windows
+    windows_event_log: Security
+    event_ids: [4624, 4625, 4648, 4672, 4720, 4726, 4732, 4740, 1102]
+
+  - name: windows-system
+    enabled: false
+    source_type: windows
+    windows_event_log: System
+    event_ids: [7045, 7034, 7031]

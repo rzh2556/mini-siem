@@ -1,0 +1,144 @@
+# Web 应用检测规则（Nginx / Apache）
+# 覆盖场景：SQL 注入、路径穿越、XSS、命令注入、目录扫描、敏感文件读取、扫描器识别
+# 说明：query 字段是 URL 解码后的完整请求串，可识别 %20union%20select 这类编码绕过
+rules:
+  - id: web-sql-injection
+    name: SQL 注入攻击
+    description: "源 IP {src_ip} 对 {host} 发起疑似 SQL 注入请求: {url}"
+    severity: critical
+    type: match
+    log_types: [nginx, apache, unknown]
+    tags: [attack.sql_injection, T1190, owasp-a03]
+    any_of:
+      - field: query
+        regex: "(?:\\bunion\\b[\\s\\S]{0,20}\\bselect\\b|\\bselect\\b[\\s\\S]{0,30}\\bfrom\\b|\\bor\\b\\s+\\d+\\s*=\\s*\\d+|\\band\\b\\s+\\d+\\s*=\\s*\\d+)"
+      - field: query
+        regex: "(?:sleep\\s*\\(|benchmark\\s*\\(|pg_sleep|waitfor\\s+delay|information_schema|load_file\\s*\\(|into\\s+(?:out|dump)file|xp_cmdshell)"
+      - field: query
+        regex: "(?:@@version|concat\\s*\\(|updatexml\\s*\\(|extractvalue\\s*\\(|\\bchar\\s*\\(\\d+\\s*\\))"
+    suppression:
+      cooldown: 600
+
+  - id: web-path-traversal
+    name: 目录穿越攻击
+    description: "源 IP {src_ip} 对 {host} 发起目录穿越请求: {url}"
+    severity: high
+    type: match
+    log_types: [nginx, apache, unknown]
+    tags: [attack.path_traversal, T1190, owasp-a01]
+    any_of:
+      - field: query
+        regex: "(?:\\.\\./|\\.\\.\\\\|/etc/passwd|/etc/shadow|/proc/self/environ|win\\.ini|boot\\.ini)"
+      - field: url
+        regex: "(?:%2e%2e%2f|%2e%2e/|\\.\\.%2f|\\.\\.%5c)"
+    suppression:
+      cooldown: 600
+
+  - id: web-xss
+    name: 跨站脚本攻击(XSS)
+    description: "源 IP {src_ip} 对 {host} 发起疑似 XSS 请求: {url}"
+    severity: medium
+    type: match
+    log_types: [nginx, apache, unknown]
+    tags: [attack.xss, owasp-a03]
+    any_of:
+      - field: query
+        regex: "(?:<script[^>]*>|javascript\\s*:|onerror\\s*=|onload\\s*=|alert\\s*\\(\\s*\\d*\\s*\\)|document\\.cookie)"
+      - field: url
+        regex: "(?:%3cscript|%3Cscript|%3e%3csvg)"
+    suppression:
+      cooldown: 600
+
+  - id: web-command-injection
+    name: 命令注入攻击
+    description: "源 IP {src_ip} 对 {host} 发起疑似命令注入请求: {url}"
+    severity: critical
+    type: match
+    log_types: [nginx, apache, unknown]
+    tags: [attack.command_injection, T1059, owasp-a03]
+    any_of:
+      - field: query
+        regex: "(?:;(?:\\s*)(?:cat|ls|id|whoami|wget|curl|nc|bash|sh|powershell)\\b|\\|\\s*(?:cat|id|whoami|nc)\\b)"
+      - field: query
+        regex: "(?:\\(\\s*\\)\\s*\\{|\\$\\{(?:IFS|PATH)\\}|`(?:id|whoami|cat)\\b|&&\\s*(?:wget|curl|bash)\\b)"
+      - field: query
+        regex: "(?:/bin/(?:ba)?sh|-c\\s+(?:id|whoami)|cmd\\.exe|powershell\\.exe)"
+    suppression:
+      cooldown: 600
+
+  - id: web-sensitive-file-access
+    name: 敏感文件探测
+    description: "源 IP {src_ip} 尝试访问敏感文件 {url}（{host}）"
+    severity: high
+    type: match
+    log_types: [nginx, apache, unknown]
+    tags: [discovery, T1083]
+    any_of:
+      - field: path
+        regex: "(?:/\\.env|/\\.git/|/\\.svn/|/\\.ssh/|/\\.aws/|\\.(?:sql|bak|old|swp|zip|tar\\.gz)$|/backup/|/dump\\.sql|/web\\.config|/wp-config\\.php)"
+      - field: raw
+        regex: "(?:/\\.env|/\\.git/|/\\.svn/|/\\.ssh/|/dump\\.sql|/wp-config\\.php)"
+    suppression:
+      cooldown: 900
+
+  - id: web-webshell-access
+    name: WebShell 访问特征
+    description: "源 IP {src_ip} 访问疑似 WebShell 地址 {url}（{host}）"
+    severity: critical
+    type: match
+    log_types: [nginx, apache, unknown]
+    tags: [attack.webshell, T1505.003]
+    any_of:
+      - field: path
+        regex: "(?:/(?:shell|webshell|cmd|upload|wso|c99|b374k|gecko|adminer)(?:[./]|$))"
+      - field: query
+        regex: "(?:cmd=|exec=|shell=|passthru=|system\\s*=|eval\\s*\\()"
+    suppression:
+      cooldown: 600
+
+  - id: web-directory-scan
+    name: 目录扫描/爆破
+    description: "源 IP {src_ip} 在 60 秒内对 {host} 产生 {count} 次 404 请求，疑似目录扫描"
+    severity: medium
+    type: threshold
+    log_types: [nginx, apache]
+    tags: [discovery, T1595.002]
+    all_of:
+      - field: status_code
+        equals: 404
+    threshold:
+      count: 30
+      window: 60
+      group_by: [src_ip, host]
+    suppression:
+      cooldown: 900
+
+  - id: web-scanner-user-agent
+    name: 已知扫描器特征
+    description: "源 IP {src_ip} 使用扫描器工具访问 {host}: {user_agent}"
+    severity: medium
+    type: match
+    log_types: [nginx, apache, unknown]
+    tags: [discovery, T1595]
+    all_of:
+      - field: user_agent
+        regex: "\\b(?:nikto|nmap|masscan|sqlmap|acunetix|nessus|openvas|dirbuster|gobuster|wfuzz|wpscan|hydra|xray|zgrab|goby|nuclei|httpx|whatweb)\\b"
+    suppression:
+      cooldown: 1800
+
+  - id: web-suspicious-status-flood
+    name: 服务器错误激增
+    description: "源 IP {src_ip} 触发 {host} 大量 5xx 错误（{count} 次），可能存在异常利用或拒绝服务"
+    severity: medium
+    type: threshold
+    log_types: [nginx, apache]
+    tags: [availability, T1499]
+    all_of:
+      - field: status_code
+        gt: 499
+    threshold:
+      count: 20
+      window: 120
+      group_by: [src_ip, host]
+    suppression:
+      cooldown: 900

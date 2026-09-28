@@ -1,0 +1,133 @@
+# Windows 事件日志检测规则
+# 数据来源：采集 Agent 通过 pywin32 读取 安全/系统 日志，以结构化字段上报
+# 常见事件 ID：
+#   4624 登录成功 / 4625 登录失败 / 4648 显式凭据登录 / 4672 授予特殊权限
+#   4720 新建账号 / 4726 删除账号 / 4732 加入管理员组 / 4740 账号锁定
+#   1102 日志被清空 / 7045 安装服务
+rules:
+  - id: win-failed-logon-bruteforce
+    name: Windows 登录爆破
+    description: "源 IP {src_ip} 在 300 秒内对 {host} 触发 {count} 次 Windows 登录失败（事件 4625）"
+    severity: high
+    type: threshold
+    log_types: [windows]
+    tags: [attack.bruteforce, T1110, windows]
+    all_of:
+      - field: event_id
+        equals: 4625
+    threshold:
+      count: 5
+      window: 300
+      group_by: [src_ip]
+    suppression:
+      cooldown: 900
+
+  - id: win-account-lockout
+    name: 账号被锁定
+    description: "账号 {user} 在 {host} 上被锁定（事件 4740），通常伴随密码爆破"
+    severity: medium
+    type: match
+    log_types: [windows]
+    tags: [attack.bruteforce, T1110.001, windows]
+    all_of:
+      - field: event_id
+        equals: 4740
+    suppression:
+      cooldown: 600
+
+  - id: win-explicit-credential-logon
+    name: 显式凭据登录
+    description: "账号 {user} 在 {host} 上使用显式凭据登录（事件 4648），可能是横向移动或凭据滥用"
+    severity: medium
+    type: match
+    log_types: [windows]
+    tags: [lateral-movement, T1078, windows]
+    all_of:
+      - field: event_id
+        equals: 4648
+    suppression:
+      cooldown: 900
+
+  - id: win-privilege-assigned
+    name: 授予特殊权限
+    description: "账号 {user} 在 {host} 上被授予特殊权限（事件 4672），需确认是否授权行为"
+    severity: low
+    type: match
+    log_types: [windows]
+    tags: [privilege-escalation, T1078.002, windows]
+    all_of:
+      - field: event_id
+        equals: 4672
+    suppression:
+      cooldown: 1800
+
+  - id: win-account-created
+    name: 新建 Windows 账号
+    description: "检测到 {host} 上新建账号 {user}（事件 4720），可能是持久化后门"
+    severity: high
+    type: match
+    log_types: [windows]
+    tags: [persistence, T1136.001, windows]
+    all_of:
+      - field: event_id
+        equals: 4720
+    suppression:
+      cooldown: 600
+
+  - id: win-admin-group-member-added
+    name: 账号加入管理员组
+    description: "账号 {user} 被加入管理员组（事件 4732），存在权限提升风险"
+    severity: high
+    type: match
+    log_types: [windows]
+    tags: [privilege-escalation, T1098, windows]
+    all_of:
+      - field: event_id
+        equals: 4732
+    suppression:
+      cooldown: 600
+
+  - id: win-audit-log-cleared
+    name: 安全日志被清空
+    description: "{host} 的安全审计日志被清空（事件 1102），典型的反取证行为"
+    severity: critical
+    type: match
+    log_types: [windows]
+    tags: [defense-evasion, T1070.001, windows]
+    all_of:
+      - field: event_id
+        equals: 1102
+    suppression:
+      cooldown: 300
+
+  - id: win-service-installed
+    name: 安装系统服务
+    description: "{host} 上安装了新服务（事件 7045），可能是持久化或提权利用"
+    severity: medium
+    type: match
+    log_types: [windows]
+    tags: [persistence, T1543.003, windows]
+    all_of:
+      - field: event_id
+        equals: 7045
+    suppression:
+      cooldown: 600
+
+  - id: win-rdp-logon-off-hours
+    name: 非工作时间远程桌面登录
+    description: "账号 {user} 从 {src_ip} 在非工作时间远程登录 {host}（事件 4624）"
+    severity: medium
+    type: match
+    log_types: [windows]
+    tags: [auth.abnormal, T1078, windows]
+    time_window:
+      start: "08:00"
+      end: "20:00"
+      mode: outside
+    all_of:
+      - field: event_id
+        equals: 4624
+      - field: message
+        regex: "(?:LogonType[:=\\s]+10|Logon Type[:=\\s]+10|RemoteInteractive|远程桌面|RDP)"
+    suppression:
+      cooldown: 1800

@@ -1,0 +1,89 @@
+# Mini SIEM 一键部署编排
+# 启动: docker compose up -d --build
+# 首次启动 Elasticsearch 需要 1-2 分钟，可用 docker compose logs -f backend 观察就绪日志
+name: mini-siem
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: siem-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms${ES_HEAP:-1g} -Xmx${ES_HEAP:-1g}
+      - bootstrap.memory_lock=true
+      - TZ=Asia/Shanghai
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    ports:
+      # 仅监听本机，避免 9200 端口暴露到公网
+      - "127.0.0.1:9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+    networks: [siem]
+
+  backend:
+    build:
+      context: ./backend
+    container_name: siem-backend
+    # 说明：以下配置会自动读取同目录 .env 文件中的同名变量，未提供时使用默认值，
+    # 因此即使没有创建 .env 也能正常启动（生产环境请务必修改 AGENT_TOKEN）。
+    environment:
+      - ES_URL=http://elasticsearch:9200
+      - ES_INDEX_PREFIX=${ES_INDEX_PREFIX:-siem}
+      - ES_RETENTION_DAYS=${ES_RETENTION_DAYS:-30}
+      - AGENT_TOKEN=${AGENT_TOKEN:-change-me-agent-token}
+      - API_TOKEN=${API_TOKEN:-}
+      - RULES_DIR=/app/rules
+      - RULES_RELOAD_INTERVAL=${RULES_RELOAD_INTERVAL:-60}
+      - GEOIP_DB_PATH=${GEOIP_DB_PATH:-/app/geoip/GeoLite2-City.mmdb}
+      - GEOIP_ONLINE_FALLBACK=${GEOIP_ONLINE_FALLBACK:-true}
+      - ALERT_COOLDOWN=${ALERT_COOLDOWN:-300}
+      - MIN_ALERT_SEVERITY=${MIN_ALERT_SEVERITY:-low}
+      - IP_WHITELIST=${IP_WHITELIST:-127.0.0.1,::1}
+      - IGNORE_INTERNAL_SRC=${IGNORE_INTERNAL_SRC:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - TZ=Asia/Shanghai
+    volumes:
+      # 挂载规则目录：修改 YAML 后 60 秒内自动热加载，无需重启
+      - ./backend/rules:/app/rules
+      # GeoIP 离线库目录（可选）
+      - ./geoip:/app/geoip
+    ports:
+      # 需要被远程 Agent 直连时开放；前端已通过 nginx 反向代理 /api，可不暴露
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [siem]
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: siem-frontend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks: [siem]
+
+volumes:
+  es-data:
+    driver: local
+
+networks:
+  siem:
+    driver: bridge

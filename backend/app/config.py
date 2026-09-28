@@ -1,0 +1,64 @@
+"""全局配置模块：从环境变量 / .env 加载运行参数。"""
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """应用配置项，字段名不区分大小写，与 .env 中的键一一对应。"""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # ---------- Elasticsearch ----------
+    es_url: str = "http://localhost:9200"
+    es_index_prefix: str = "siem"
+    es_retention_days: int = 30
+
+    # ---------- 服务 ----------
+    agent_token: str = "change-me-agent-token"
+    api_token: str = ""
+    log_level: str = "INFO"
+    cors_origins: str = "*"
+
+    # ---------- GeoIP ----------
+    geoip_db_path: str = ""
+    geoip_online_fallback: bool = True
+
+    # ---------- 规则 ----------
+    rules_dir: str = "rules"
+    rules_reload_interval: int = 60
+
+    # ---------- 告警降噪 ----------
+    alert_cooldown: int = 300
+    min_alert_severity: str = "low"
+    ip_whitelist: str = "127.0.0.1,::1"
+    ignore_internal_src: bool = False
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """把逗号分隔的 CORS 配置转成列表。"""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def whitelist_ips(self) -> set[str]:
+        """把逗号分隔的 IP 白名单转成集合。"""
+        return {ip.strip() for ip in self.ip_whitelist.split(",") if ip.strip()}
+
+    @property
+    def log_index_pattern(self) -> str:
+        """日志索引通配模式。"""
+        return f"{self.es_index_prefix}-logs-*"
+
+    @property
+    def alert_index(self) -> str:
+        """告警索引名。"""
+        return f"{self.es_index_prefix}-alerts"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """返回全局唯一的配置实例（带缓存）。"""
+    return Settings()
+
+
+settings = get_settings()
