@@ -242,19 +242,50 @@ curl -X POST "http://127.0.0.1:8000/api/v1/ingest/upload" \
 
 返回字段：`filename`、`source_type`（实际使用的类型）、`auto_detected`（是否为自动识别）、`total_lines`、`accepted`（入库条数）、`skipped`（超出上限被跳过条数）、`alerts`（新增告警数）、`preview`（前 5 条解析结果与命中规则）。
 
-限制与说明：单文件最大 50MB、最多解析 20 万行/条记录（超出部分计入 `skipped`），建议按天切分后分批上传；文本日志编码自动兼容 UTF-8 / GBK / UTF-16；`.evtx` 损坏或非事件日志文件会返回 400 错误。
+限制与说明：单文件默认最大 200MB、最多解析 20 万行/条记录（均可在「系统设置 → 文件上传」中热调整，或用 `.env` 的 `MAX_UPLOAD_MB` / `MAX_UPLOAD_LINES` 设置默认值；Docker 部署 nginx 上限为 500MB），超出大小返回 413、超出条数部分计入 `skipped`，建议按天切分后分批上传；文本日志编码自动兼容 UTF-8 / GBK / UTF-16；`.evtx` 损坏或非事件日志文件会返回 400 错误。
 
 ## 五、检测规则
 
 规则文件位于 `backend/rules/*.yml`，通过 `./backend/rules` 目录挂载进容器，**修改后 60 秒内自动热加载**，也可在「规则管理」页点击“重新加载规则文件”立即生效。
 
-### 在管理后台维护规则
+### 5.1 三种新增/自定义规则的方式
 
-「规则管理」页提供可视化规则编辑器，无需手写 YAML：
+1. **可视化表单（推荐新手）**：「规则管理」页点「新增规则」，填写基本信息（ID 仅允许小写字母/数字/`-`/`_`）、适用日志类型，用条件构造器添加 `all_of`/`any_of` 条件，并按需配置阈值、首次出现、抑制参数。自定义规则持久化在 `custom_managed.yml`，可随时**编辑/删除**；
+2. **导入 Sigma 规则**：点「导入 Sigma 规则」，上传或粘贴 [Sigma](https://github.com/SigmaHQ/sigma) 官方 YAML（支持 `---` 分隔多条），系统自动转换为内部规则并保存。详见 5.3；
+3. **手写 YAML 热加载**：按 5.2 的格式写好 `.yml` 放入 `backend/rules/` 目录，60 秒内自动加载，也可在页面手动点「重新加载」。
 
-- **新增规则**：点击「新增规则」，填写基本信息（ID 仅允许小写字母/数字/`-`/`_`）、适用日志类型，用条件构造器添加 `all_of`/`any_of` 条件，并按需配置阈值、首次出现、抑制参数；
-- **编辑/删除**：自定义规则（`custom_managed.yml` 持久化）可随时编辑或删除；**内置规则为只读基线，不可修改或删除**（列表中以「内置」标识）；
-- 保存后立即重载生效，可在列表中看到每条规则的来源（内置/自定义）与命中次数。
+> 内置 26 条规则为只读基线（列表中以「内置」标识），仅支持在线**启停、调整等级/阈值**，不能整体编辑或删除；自定义与 Sigma 导入的规则以「自定义」标识，可完整编辑删除。页面上点「规则格式说明」可随时查看字段标准并下载 YAML 模板。
+
+### 5.2 规则格式标准（YAML）
+
+一个文件可包含单条规则（直接写字段）或多条规则（顶层 `rules:` 列表）。顶层字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 唯一 ID，2~64 位小写字母/数字/`-`/`_` |
+| `name` / `description` | 规则名称 / 描述（描述中 `{字段名}` 与正则命名分组会被替换） |
+| `severity` | `low` / `medium` / `high` / `critical` |
+| `type` | `match` 特征匹配 / `threshold` 阈值统计 / `first_seen` 首次出现 |
+| `enabled` | 是否启用 |
+| `log_types` | 适用日志类型：`any` 或 `nginx`/`apache`/`ssh`/`windows`/`syslog`/`linux` |
+| `tags` | 自由标签，可写 MITRE ATT&CK 编号 |
+| `all_of` / `any_of` | 条件组：组内 AND / OR，两组之间也是 AND |
+| `threshold` | 阈值规则：`count` / `window`(秒) / `group_by` |
+| `first_seen_field` / `first_seen_lookback` | 首次出现规则的观测字段 / 回溯秒数（默认 30 天） |
+| `time_window` | `{start: "08:00", end: "20:00", mode: outside}`，outside=窗外告警 |
+| `suppression` | `cooldown` 冷却秒数 / `ignore_ips` / `ignore_internal` |
+
+**条件算子（每个条件只填一种，字符串匹配均大小写不敏感）**：
+
+| 算子 | 含义 | 示例 |
+| --- | --- | --- |
+| `equals` | 精确相等 | `equals: 4625` |
+| `contains` / `not_contains` | 包含 / 不包含子串 | `contains: admin` |
+| `regex` | 正则（`re.search` 子串语义，命名分组可提取字段） | `regex: 'Failed\s+password'` |
+| `in` / `not_in` | 属于 / 不属于列表 | `in: [4624, 4625]` |
+| `gt` / `lt` | 数值大于 / 小于 | `gt: 500` |
+
+**常用归一化字段**：`raw`、`message`、`host`、`src_ip`、`dst_ip`、`user`、`method`、`url`、`path`、`status_code`、`user_agent`、`event_id`、`channel`、`process`、`command`。Windows 事件的 `EventID`→`event_id`、`TargetUserName`/`SubjectUserName`→`user`、`Image`→`process`、`CommandLine`→`command`。
 
 ### 规则示例
 
@@ -279,9 +310,18 @@ suppression:
   ignore_internal: false           # 是否忽略内网源
 ```
 
-**条件判断关键字**：`regex`（正则，命名分组可用于描述模板与分组）、`equals`、`contains`、`in`、`not_in`、`gt`、`lt`。
-**时间窗**：`time_window: {start: "08:00", end: "20:00", mode: outside}` 用于非工作时间登录检测。
-**首次出现**：`type: first_seen` + `first_seen_field: "src_ip,user"` + `first_seen_lookback: 2592000`，用于识别陌生 IP/账号登录。
+### 5.3 导入 Sigma 规则
+
+可以直接导入 [SigmaHQ 规则库](https://github.com/SigmaHQ/sigma/tree/master/rules)等来源的 Sigma YAML，转换在后端完成并逐条返回结果（已导入/跳过/失败 + 警告），**转换失败的规则会明确报错，不会静默忽略**。
+
+支持的 Sigma 子集：
+
+- `detection` 中任意 `selection`/`filter` 命名块，`condition` 支持 `and`/`or`/`not`/括号、`1 of them`、`all of them`、`1/all of selection*`、`1 of (a,b)`；列表型 selection（组内 AND、组间 OR）；
+- 字段修饰符：`contains`(`|all`)、`startswith`、`endswith`、`re`、`base64`/`base64offset`（自动展开 UTF-8/UTF-16LE 三偏移）、`windash`（`-`/`/` 通配）、`gt/gte/lt/lte`、`nocase`（引擎本身大小写不敏感）；
+- `logsource` 自动映射日志类型、`level` 自动映射严重等级，常见 Windows/Web 字段自动映射为归一化字段；未识别字段降级为 `raw` 全文匹配并给出警告；
+- 内部规则模型只有“all_of AND any_of”两层，无法表达任意布尔表达式，因此 **OR 条件会自动拆成多条等价规则**（ID 加 `-1/-2` 后缀，单次最多 16 条）。
+
+**暂不支持**（对应规则标记失败并提示原因）：`| count()` 等聚合条件与 `near` 近邻（可改用 `threshold` 阈值规则手动创建）、`cidr`、`null`、`expand` 修饰符、“N 选 M”量化。
 
 ### 内置规则一览（26 条）
 
@@ -321,6 +361,8 @@ suppression:
 | `MIN_ALERT_SEVERITY` | `low` | 低于该等级的告警丢弃 |
 | `IP_WHITELIST` | `127.0.0.1,::1` | 全局白名单 IP |
 | `IGNORE_INTERNAL_SRC` | `false` | 是否忽略内网源 IP 的告警 |
+| `MAX_UPLOAD_MB` | `200` | 控制台单文件上传大小上限（MB），后台「系统设置」可热改 |
+| `MAX_UPLOAD_LINES` | `200000` | 单文件最多解析的日志/事件条数，超出计入 skipped |
 | `ES_HEAP` | `1g` | Elasticsearch JVM 堆大小（仅 Docker + es profile 使用） |
 
 ### 7.1 配置文件在哪里
@@ -448,6 +490,7 @@ sudo systemctl start mini-siem
 | DELETE | `/api/v1/rules/{id}` | 删除自定义规则（管理员，内置规则不可删） |
 | PATCH | `/api/v1/rules/{id}` | 在线启停规则 / 调整等级与阈值 |
 | POST | `/api/v1/rules/reload` | 重新加载规则文件 |
+| POST | `/api/v1/rules/import-sigma` | 导入 Sigma 规则 YAML（管理员，支持多文档/覆盖选项） |
 | GET | `/api/v1/stats/overview` | 总览指标与 TOP 排行 |
 | GET | `/api/v1/stats/timeline` | 日志与告警时间趋势 |
 | GET | `/api/v1/stats/geo` | 攻击地图数据 |
@@ -517,6 +560,9 @@ cd /opt/mini-siem/backend
 ```
 
 Docker 部署可进入容器执行：`docker compose exec backend python reset_admin.py`。
+
+**上传日志报 413 Request Entity Too Large**
+上传文件超过大小上限。后端默认上限 200MB，可在「系统设置 → 文件上传」调大 `max_upload_mb`（立即生效），或在 `.env` 中设置 `MAX_UPLOAD_MB` 后重启。Docker 部署还有一层 nginx 限制（已配置为 500MB），**修改后需执行 `docker compose up -d --build frontend` 重建前端镜像生效**。超大 EVTX 建议在事件查看器中按时间/通道筛选导出，或分批上传。
 
 **告警迟迟不出现**
 频率类规则需要达到阈值（例如 SSH 暴力破解 300 秒内 5 次）；另外检查 `.env` 的 `MIN_ALERT_SEVERITY` 是否把低等级告警过滤掉了。

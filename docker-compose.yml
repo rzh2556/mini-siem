@@ -62,6 +62,8 @@ services:
       - SYSTEM_DB_PATH=/app/data/system.db
       - RULES_DIR=/app/rules
       - RULES_RELOAD_INTERVAL=${RULES_RELOAD_INTERVAL:-60}
+      - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-200}
+      - MAX_UPLOAD_LINES=${MAX_UPLOAD_LINES:-200000}
       - GEOIP_DB_PATH=${GEOIP_DB_PATH:-/app/geoip/GeoLite2-City.mmdb}
       - GEOIP_ONLINE_FALLBACK=${GEOIP_ONLINE_FALLBACK:-true}
       - ALERT_COOLDOWN=${ALERT_COOLDOWN:-300}

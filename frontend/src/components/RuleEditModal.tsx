@@ -43,6 +43,7 @@ const OPERATOR_OPTIONS = [
   { label: '正则匹配 regex', value: 'regex' },
   { label: '等于 equals', value: 'equals' },
   { label: '包含 contains', value: 'contains' },
+  { label: '不包含 not_contains', value: 'not_contains' },
   { label: '属于列表 in（逗号分隔）', value: 'in' },
   { label: '不属于列表 not_in（逗号分隔）', value: 'not_in' },
   { label: '大于 gt', value: 'gt' },
@@ -130,6 +131,8 @@ function buildConditions(conditions: FlatCondition[] | undefined): RuleCondition
         condition.equals = smartValue(text);
       } else if (item.op === 'regex') {
         condition.regex = text;
+      } else if (item.op === 'not_contains') {
+        condition.not_contains = text;
       } else {
         condition.contains = text;
       }
@@ -151,6 +154,9 @@ function flattenConditions(conditions: RuleCondition[] | undefined): FlatConditi
     } else if (condition.contains !== undefined && condition.contains !== null) {
       op = 'contains';
       value = String(condition.contains);
+    } else if (condition.not_contains !== undefined && condition.not_contains !== null) {
+      op = 'not_contains';
+      value = String(condition.not_contains);
     } else if (condition.in) {
       op = 'in';
       value = condition.in.map(String).join(',');

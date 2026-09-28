@@ -222,7 +222,7 @@ export default function UploadLogModal({ open, onClose, onSuccess }: UploadLogMo
           <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
             支持两类文件：① Nginx / Apache / SSH / 通用 Syslog 等文本日志（.log/.txt）；
             ② Windows 事件日志导出文件（.evtx，可直接从“事件查看器”导出后上传，将按 Windows 规则检测）。
-            单个文件不超过 50MB。
+            单个文件默认不超过 200MB（可在“系统设置 → 文件上传”中调整）。
           </Typography.Paragraph>
 
           <Form<UploadForm> form={form} layout="vertical" initialValues={{ source_type: 'auto' }}>
@@ -255,7 +255,7 @@ export default function UploadLogModal({ open, onClose, onSuccess }: UploadLogMo
             disabled={uploading}
           >
             <p className="ant-upload-text">点击或拖拽日志文件到此处</p>
-            <p className="ant-upload-hint">支持文本日志与 Windows .evtx 事件文件，最大 50MB</p>
+            <p className="ant-upload-hint">支持文本日志与 Windows .evtx 事件文件，默认最大 200MB（可在系统设置调整）</p>
           </Upload.Dragger>
 
           {uploading ? (

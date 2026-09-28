@@ -136,6 +136,8 @@ class RuleEngine:
             return False
         if cond.contains and (value is None or str(cond.contains).lower() not in str(value).lower()):
             return False
+        if cond.not_contains and (value is not None and str(cond.not_contains).lower() in str(value).lower()):
+            return False
         if cond.in_ is not None and str(value) not in [str(v) for v in cond.in_]:
             return False
         if cond.not_in is not None and str(value) in [str(v) for v in cond.not_in]:

@@ -1,11 +1,38 @@
-/** 规则管理页面：查看检测规则、在线启停与调整等级、重新加载规则文件。 */
+/** 规则管理页面：查看规则、启停/调整等级、新增编辑删除自定义规则、导入 Sigma、热加载。 */
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Button, Card, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import {
+  Button,
+  Card,
+  Popconfirm,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
+} from 'antd';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  ImportOutlined,
+  PlusOutlined,
+  QuestionCircleOutlined,
+} from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { fetchRules, reloadRules, updateRule } from '../api/endpoints';
+import {
+  fetchRules,
+  reloadRules,
+  removeRule,
+  updateRule,
+} from '../api/endpoints';
 import type { Rule, RuleType, Severity } from '../api/types';
+import RuleEditModal from '../components/RuleEditModal';
+import RuleFormatHelpDrawer from '../components/RuleFormatHelpDrawer';
 import SeverityTag from '../components/SeverityTag';
+import SigmaImportModal from '../components/SigmaImportModal';
 import { formatSeconds } from '../utils/format';
 
 /** 规则类型 -> 中文文案 */
@@ -52,6 +79,10 @@ export default function Rules() {
   const [enabledCount, setEnabledCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [reloading, setReloading] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<Rule | null>(null);
+  const [sigmaOpen, setSigmaOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   /** 加载全部规则 */
   const load = useCallback(async () => {
@@ -73,7 +104,7 @@ export default function Rules() {
   }, [load]);
 
   /** 用后端返回的最新规则替换本地条目，并同步启用数量 */
-  const replaceRule = (updated: Rule) => {
+  const replaceRuleState = (updated: Rule) => {
     const next = items.map((item) => (item.id === updated.id ? updated : item));
     setItems(next);
     setEnabledCount(next.filter((item) => item.enabled).length);
@@ -83,7 +114,7 @@ export default function Rules() {
   const handleToggleEnabled = (rule: Rule, enabled: boolean) => {
     updateRule(rule.id, { enabled })
       .then((updated) => {
-        replaceRule(updated);
+        replaceRuleState(updated);
         message.success(`规则「${rule.name}」已${enabled ? '启用' : '停用'}`);
       })
       .catch(() => undefined);
@@ -93,10 +124,32 @@ export default function Rules() {
   const handleChangeSeverity = (rule: Rule, severity: Severity) => {
     updateRule(rule.id, { severity })
       .then((updated) => {
-        replaceRule(updated);
+        replaceRuleState(updated);
         message.success(`规则「${rule.name}」等级已更新`);
       })
       .catch(() => undefined);
+  };
+
+  /** 删除自定义规则并刷新列表 */
+  const handleDelete = (rule: Rule) => {
+    removeRule(rule.id)
+      .then(() => {
+        message.success(`规则「${rule.name}」已删除`);
+        load();
+      })
+      .catch(() => undefined);
+  };
+
+  /** 打开新增规则弹窗 */
+  const handleCreate = () => {
+    setEditingRule(null);
+    setEditOpen(true);
+  };
+
+  /** 打开编辑自定义规则弹窗 */
+  const handleEdit = (rule: Rule) => {
+    setEditingRule(rule);
+    setEditOpen(true);
   };
 
   /** 触发后端重新加载规则文件 */
@@ -128,10 +181,18 @@ export default function Rules() {
       ellipsis: true,
     },
     {
+      title: '来源',
+      dataIndex: 'managed',
+      key: 'managed',
+      width: 100,
+      render: (managed: boolean) =>
+        managed ? <Tag color="geekblue">自定义</Tag> : <Tag>内置</Tag>,
+    },
+    {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
-      width: 110,
+      width: 100,
       render: (type: RuleType) => TYPE_LABELS[type] ?? type,
     },
     {
@@ -156,7 +217,7 @@ export default function Rules() {
       title: '日志类型',
       dataIndex: 'log_types',
       key: 'log_types',
-      width: 180,
+      width: 170,
       render: (types: string[]) =>
         types && types.length > 0
           ? types.map((type) => (
@@ -167,31 +228,16 @@ export default function Rules() {
           : '-',
     },
     {
-      title: '标签',
-      dataIndex: 'tags',
-      key: 'tags',
-      width: 180,
-      render: (tags: string[]) =>
-        tags && tags.length > 0
-          ? tags.map((tag) => (
-              <Tag key={tag} color="blue">
-                {tag}
-              </Tag>
-            ))
-          : '-',
-    },
-    {
       title: '阈值信息',
       key: 'threshold',
-      width: 220,
+      width: 210,
       render: (_value, record) => thresholdText(record),
     },
     {
       title: '状态',
       dataIndex: 'enabled',
       key: 'enabled',
-      width: 100,
-      fixed: 'right',
+      width: 90,
       render: (enabled: boolean, record) => (
         <Switch
           checked={enabled}
@@ -201,6 +247,36 @@ export default function Rules() {
         />
       ),
     },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 110,
+      fixed: 'right',
+      render: (_value, record) =>
+        record.managed ? (
+          <Space size={4}>
+            <Tooltip title="编辑">
+              <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+            </Tooltip>
+            <Popconfirm
+              title={`删除规则「${record.name}」？`}
+              description="删除后立即生效，可重新创建或再次导入。"
+              okText="删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={() => handleDelete(record)}
+            >
+              <Tooltip title="删除">
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          </Space>
+        ) : (
+          <Tooltip title="内置规则仅支持启停与等级调整，不能编辑或删除">
+            <Tag style={{ marginInlineStart: 8 }}>只读</Tag>
+          </Tooltip>
+        ),
+    },
   ];
 
   return (
@@ -209,13 +285,22 @@ export default function Rules() {
         <div>
           <h2 className="page-title">规则管理</h2>
           <div className="page-subtitle">
-            共 {total} 条规则，已启用 {enabledCount} 条；修改立即生效，无需重启服务
+            共 {total} 条规则，已启用 {enabledCount} 条；支持可视化新增、YAML 文件热加载与 Sigma 规则导入
           </div>
         </div>
         <div className="page-toolbar">
+          <Button icon={<QuestionCircleOutlined />} onClick={() => setHelpOpen(true)}>
+            规则格式说明
+          </Button>
+          <Button icon={<ImportOutlined />} onClick={() => setSigmaOpen(true)}>
+            导入 Sigma 规则
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+            新增规则
+          </Button>
           <Button onClick={load}>刷新</Button>
-          <Button type="primary" loading={reloading} onClick={handleReload}>
-            重新加载规则文件
+          <Button loading={reloading} onClick={handleReload}>
+            重新加载
           </Button>
         </div>
       </div>
@@ -227,7 +312,7 @@ export default function Rules() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          scroll={{ x: 1400 }}
+          scroll={{ x: 1560 }}
           locale={{ emptyText: '暂无规则' }}
           expandable={{
             expandedRowRender: (record) => (
@@ -277,6 +362,15 @@ export default function Rules() {
           }}
         />
       </Card>
+
+      <RuleEditModal
+        open={editOpen}
+        initial={editingRule}
+        onClose={() => setEditOpen(false)}
+        onSaved={load}
+      />
+      <SigmaImportModal open={sigmaOpen} onClose={() => setSigmaOpen(false)} onImported={load} />
+      <RuleFormatHelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

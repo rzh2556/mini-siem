@@ -112,6 +112,7 @@ class RuleCondition(BaseModel):
     regex: str | None = None
     equals: Any | None = None
     contains: str | None = None
+    not_contains: str | None = None
     in_: list[Any] | None = Field(default=None, alias="in")
     not_in: list[Any] | None = None
     gt: float | None = None
@@ -203,6 +204,36 @@ class RuleUpdate(BaseModel):
     threshold: ThresholdConfig | None = None
 
 
+class SigmaImportRequest(BaseModel):
+    """Sigma 规则 YAML 导入入参（支持 --- 分隔的多条文档）。"""
+
+    content: str
+    # 已存在的同 ID 自定义规则是否覆盖更新
+    overwrite: bool = False
+
+
+class SigmaImportItem(BaseModel):
+    """单条 Sigma 文档的导入结果。"""
+
+    title: str
+    sigma_id: str = ""
+    rule_ids: list[str] = Field(default_factory=list)
+    severity: str = "medium"
+    # imported 已导入 / skipped 因重复或内置冲突跳过 / error 转换失败
+    status: str = "imported"
+    warnings: list[str] = Field(default_factory=list)
+    error: str = ""
+
+
+class SigmaImportResponse(BaseModel):
+    """Sigma 规则导入汇总结果。"""
+
+    imported: int = 0
+    skipped: int = 0
+    failed: int = 0
+    items: list[SigmaImportItem] = Field(default_factory=list)
+
+
 class LoginRequest(BaseModel):
     """管理员登录入参。"""
 
@@ -242,6 +273,8 @@ class SettingsUpdate(BaseModel):
     api_token: str | None = None
     agent_token: str | None = None
     rules_reload_interval: int | None = Field(default=None, ge=5, le=3600)
+    max_upload_mb: int | None = Field(default=None, ge=1, le=4096)
+    max_upload_lines: int | None = Field(default=None, ge=10_000, le=2_000_000)
 
 
 class AlertUpdate(BaseModel):

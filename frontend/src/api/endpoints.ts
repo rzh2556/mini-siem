@@ -20,6 +20,7 @@ import type {
   RulesResponse,
   RuleSavePayload,
   RuleUpdatePayload,
+  SigmaImportResponse,
   SettingsResponse,
   SettingsSaveResponse,
   SystemInfo,
@@ -158,6 +159,22 @@ export async function removeRule(id: string): Promise<{ deleted: boolean }> {
   return data;
 }
 
+/**
+ * 导入 Sigma 规则 YAML（支持 --- 分隔多条文档）。
+ * @param content Sigma YAML 文本
+ * @param overwrite 已存在的同 ID 自定义规则是否覆盖更新
+ */
+export async function importSigmaRules(
+  content: string,
+  overwrite: boolean,
+): Promise<SigmaImportResponse> {
+  const { data } = await client.post<SigmaImportResponse>('/rules/import-sigma', {
+    content,
+    overwrite,
+  });
+  return data;
+}
+
 /** 管理员登录，返回 JWT 与账号信息。 */
 export async function login(payload: LoginRequest): Promise<LoginResponse> {
   const { data } = await client.post<LoginResponse>('/auth/login', payload);
@@ -225,7 +242,9 @@ export async function uploadLogFile(
   formData.append('host', host);
   formData.append('source_type', sourceType);
   // 不手动设置 Content-Type，交给浏览器自动补全 multipart 的 boundary
+  // 大 EVTX 文件解析较慢，单独放宽超时到 10 分钟（全局默认仅 30 秒）
   const { data } = await client.post<UploadResult>('/ingest/upload', formData, {
+    timeout: 600000,
     onUploadProgress: (event) => {
       if (!onProgress || !event.total) {
         return;

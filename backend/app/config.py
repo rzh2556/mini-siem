@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     rules_dir: str = "rules"
     rules_reload_interval: int = 60
 
+    # ---------- 文件上传 ----------
+    # 单文件上传大小上限（MB）；Windows .evtx 安全日志通常较大，默认放宽到 200MB
+    max_upload_mb: int = 200
+    # 单文件最多解析的日志行/事件条数，防止超大文件拖垮服务
+    max_upload_lines: int = 200_000
+
     # ---------- 告警降噪 ----------
     alert_cooldown: int = 300
     min_alert_severity: str = "low"

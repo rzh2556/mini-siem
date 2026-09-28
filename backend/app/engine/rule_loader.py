@@ -204,6 +204,23 @@ class RuleLoader:
         self.load()
         return True
 
+    def upsert_managed_batch(self, rules: list[Rule]) -> None:
+        """按 ID 批量新增/更新自定义规则，仅写盘并重载一次。"""
+        rules_data = self._read_managed_dicts()
+        index_by_id = {item.get("id"): index for index, item in enumerate(rules_data)}
+        for rule in rules:
+            payload = rule.model_dump(by_alias=True, exclude={"enabled_source"})
+            if rule.id in index_by_id:
+                rules_data[index_by_id[rule.id]] = payload
+            else:
+                index_by_id[rule.id] = len(rules_data)
+                rules_data.append(payload)
+        # 覆盖更新后以文件内容为准，统一清理这些规则的运行期覆盖配置
+        for rule in rules:
+            self._drop_override(rule.id)
+        self._write_managed(rules_data)
+        self.load()
+
 
 def normalize_rule_dict(raw: dict[str, Any]) -> dict[str, Any]:
     """把 YAML 中 `in` 等 Python 关键字字段转换为模型字段名。"""

@@ -39,6 +39,8 @@ EDITABLE_SETTINGS: dict[str, type] = {
     "api_token": str,
     "agent_token": str,
     "rules_reload_interval": int,
+    "max_upload_mb": int,
+    "max_upload_lines": int,
 }
 
 SCHEMA_SQL = """

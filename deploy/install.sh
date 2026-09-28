@@ -156,6 +156,10 @@ ES_RETENTION_DAYS=30
 RULES_DIR=${INSTALL_DIR}/rules
 RULES_RELOAD_INTERVAL=60
 
+# ---- 文件上传（EVTX 安全日志可能较大）----
+MAX_UPLOAD_MB=200
+MAX_UPLOAD_LINES=200000
+
 # ---- 由后端托管前端静态文件（免装 nginx）----
 FRONTEND_DIST=${INSTALL_DIR}/frontend/dist
 

@@ -276,6 +276,34 @@ export default function AdminSettings() {
               </Form.Item>
             </Card>
 
+            <Card title="文件上传" size="small" style={{ marginBottom: 16 }}>
+              <Space wrap size={20} align="start">
+                <Form.Item
+                  name="max_upload_mb"
+                  label="单文件大小上限"
+                  extra="Windows .evtx 安全日志通常较大；超限后端返回 413。Docker 部署同时受 nginx 上限（500MB）约束。"
+                >
+                  <InputNumber min={1} max={4096} addonAfter="MB" style={{ width: 200 }} />
+                </Form.Item>
+                <Form.Item
+                  name="max_upload_lines"
+                  label="单文件最多解析条数"
+                  extra="超出部分计入 skipped，防止超大文件拖垮服务。"
+                >
+                  <InputNumber
+                    min={10000}
+                    max={2000000}
+                    step={10000}
+                    addonAfter="条"
+                    style={{ width: 220 }}
+                  />
+                </Form.Item>
+              </Space>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+                保存后立即生效，无需重启；也可在部署配置 .env 中用 MAX_UPLOAD_MB / MAX_UPLOAD_LINES 设置默认值。
+              </Typography.Paragraph>
+            </Card>
+
             <Card title="GeoIP 与系统" size="small" style={{ marginBottom: 16 }}>
               <Form.Item
                 name="geoip_db_path"

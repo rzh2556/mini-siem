@@ -208,6 +208,8 @@ export interface RuleCondition {
   regex?: string | null;
   equals?: unknown;
   contains?: string | null;
+  /** 不包含子串（大小写不敏感） */
+  not_contains?: string | null;
   in?: unknown[] | null;
   not_in?: unknown[] | null;
   gt?: number | null;
@@ -274,6 +276,26 @@ export interface RuleUpdatePayload {
 /** 规则创建/整体更新入参与规则实体一致（managed 等运行期字段由后端忽略） */
 export type RuleSavePayload = Rule;
 
+/** 单条 Sigma 文档的导入结果 */
+export interface SigmaImportItem {
+  title: string;
+  sigma_id?: string | null;
+  rule_ids?: string[] | null;
+  severity?: string | null;
+  /** imported 已导入 / skipped 跳过（重复或内置冲突）/ error 转换失败 */
+  status: 'imported' | 'skipped' | 'error';
+  warnings?: string[] | null;
+  error?: string | null;
+}
+
+/** Sigma 规则导入汇总结果 */
+export interface SigmaImportResponse {
+  imported: number;
+  skipped: number;
+  failed: number;
+  items: SigmaImportItem[];
+}
+
 /** 管理员登录入参 */
 export interface LoginRequest {
   username: string;
@@ -309,6 +331,10 @@ export interface EditableSettings {
   api_token: string;
   agent_token: string;
   rules_reload_interval: number;
+  /** 单文件上传大小上限（MB） */
+  max_upload_mb: number;
+  /** 单文件最多解析的日志条数 */
+  max_upload_lines: number;
 }
 
 /** 只读部署参数 */

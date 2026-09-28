@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 
 from app.api.utils import require_agent_token, require_api_token
+from app.config import settings
 from app.models.schemas import (
     IngestEvent,
     IngestRequest,
@@ -18,9 +19,7 @@ from app.normalize.evtx_parser import is_evtx_content, parse_evtx
 router = APIRouter(prefix="/ingest", tags=["采集"])
 
 MAX_EVENTS_PER_REQUEST = 2000
-# 单文件上传上限 50MB、单文件最多解析 20 万行，避免超大文件拖垮服务
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-MAX_UPLOAD_LINES = 200_000
+# 上传大小/条数上限默认值集中在 config.Settings，可在系统设置中热调整
 UPLOAD_CHUNK = 1024 * 1024
 UPLOAD_BATCH = 1000
 PREVIEW_SIZE = 5
@@ -51,6 +50,7 @@ async def ingest_raw(
 
 async def _read_upload(file: UploadFile) -> bytes:
     """分块读取上传文件，超过大小上限时抛出 413。"""
+    max_bytes = settings.max_upload_mb * 1024 * 1024
     chunks: list[bytes] = []
     size = 0
     while True:
@@ -58,10 +58,13 @@ async def _read_upload(file: UploadFile) -> bytes:
         if not chunk:
             break
         size += len(chunk)
-        if size > MAX_UPLOAD_BYTES:
+        if size > max_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"文件超过 {MAX_UPLOAD_BYTES // 1024 // 1024}MB 上限，请先按天切分后再上传",
+                detail=(
+                    f"文件超过 {settings.max_upload_mb}MB 上限（可在“系统设置”中调大 max_upload_mb，"
+                    "或将大文件按天/按通道切分后分批上传）"
+                ),
             )
         chunks.append(chunk)
     return b"".join(chunks)
@@ -140,7 +143,7 @@ async def upload_log_file(
         if source_type not in ("auto", "windows"):
             raise HTTPException(status_code=400, detail="EVTX 文件的日志类型必须为 windows（或 auto）")
         try:
-            parsed_events, skipped = parse_evtx(raw, MAX_UPLOAD_LINES)
+            parsed_events, skipped = parse_evtx(raw, settings.max_upload_lines)
         except ImportError as exc:
             raise HTTPException(status_code=500, detail="服务端缺少 python-evtx 依赖，无法解析 EVTX 文件") from exc
         except Exception as exc:  # 文件整体无法识别时给出明确提示
@@ -180,7 +183,7 @@ async def upload_log_file(
     if resolved_type == "unknown":
         resolved_type = "syslog"  # 无法识别时按通用 syslog 处理，解析器会自动尝试访问日志格式
 
-    processed = lines[:MAX_UPLOAD_LINES]
+    processed = lines[: settings.max_upload_lines]
     events = [IngestEvent(raw=line) for line in processed]
     accepted, alerts = await _process_events(host, resolved_type, events)
 
