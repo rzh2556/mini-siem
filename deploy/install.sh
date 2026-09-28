@@ -67,7 +67,7 @@ ensure_user() {
 # 同步后端代码与检测规则到安装目录
 sync_backend() {
     log "复制后端代码与规则到 ${INSTALL_DIR} ..."
-    mkdir -p "${INSTALL_DIR}"/{backend,rules,data,frontend}
+    mkdir -p "${INSTALL_DIR}"/{backend,rules,data,frontend,geoip}
     cp -a "${SRC_DIR}/backend/app" "${INSTALL_DIR}/backend/"
     cp -a "${SRC_DIR}/backend/requirements.txt" "${INSTALL_DIR}/backend/"
     cp -a "${SRC_DIR}/backend/rules/." "${INSTALL_DIR}/rules/"

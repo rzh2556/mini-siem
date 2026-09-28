@@ -293,6 +293,93 @@ suppression:
 | `IGNORE_INTERNAL_SRC` | `false` | 是否忽略内网源 IP 的告警 |
 | `ES_HEAP` | `1g` | Elasticsearch JVM 堆大小（仅 Docker + es profile 使用） |
 
+### 7.1 配置文件在哪里
+
+| 部署方式 | 配置文件 | 数据目录 |
+| --- | --- | --- |
+| 裸机（systemd） | `/opt/mini-siem/.env` | `/opt/mini-siem/data/`（`siem.db` 等） |
+| Docker Compose | 项目根目录 `.env`（由 `.env.example` 复制） | 宿主项目根目录 `./data/` |
+
+### 7.2 改完配置怎么生效
+
+```bash
+# 裸机
+sudo vim /opt/mini-siem/.env
+sudo systemctl restart mini-siem
+
+# Docker（compose 会自动重建受影响的容器）
+vim .env
+docker compose up -d
+```
+
+> 规则文件（`rules/*.yml`）**不需要重启**，保存后 60 秒内自动热加载；也可在「规则管理」页点“重新加载规则文件”立即生效。
+
+### 7.3 常见配置改法
+
+**① 修改访问端口**
+
+```bash
+# 裸机：重跑安装脚本并指定端口（脚本会同步更新 systemd 单元）
+sudo SERVICE_PORT=9000 bash deploy/install.sh
+
+# Docker：改 .env 中的 BACKEND_PORT / FRONTEND_PORT 后重新 up
+```
+
+**② 切换存储后端**
+
+```bash
+# 改用 Elasticsearch（需先部署 ES，至少 4G 内存）
+STORAGE_BACKEND=elasticsearch
+ES_URL=http://127.0.0.1:9200
+
+# 改回 SQLite
+STORAGE_BACKEND=sqlite
+SQLITE_PATH=/opt/mini-siem/data/siem.db
+```
+
+切换后重启服务即可，历史数据不会自动迁移（SQLite 与 ES 各自独立存储）。
+
+**③ 调整日志保留天数**：`ES_RETENTION_DAYS=30`（两种后端都生效，后台每小时清理一次过期日志，告警不会被清理）。
+
+**④ 加固访问**：把 `AGENT_TOKEN` 改成随机长字符串；公网部署再设置 `API_TOKEN`，之后访问控制台需带该令牌。
+
+**⑤ 减少误报**：`IP_WHITELIST` 为**精确 IP 匹配**（不支持网段），例如 `IP_WHITELIST=127.0.0.1,::1,47.98.10.20`；若整片内网都不需要告警，直接设 `IGNORE_INTERNAL_SRC=true` 只关注外网攻击。规则级还可用 `suppression.ignore_ips` 单独豁免。
+
+**⑥ 配置 GeoIP**：把 `GeoLite2-City.mmdb` 放进 `geoip/` 目录（裸机为 `/opt/mini-siem/geoip/`，Docker 为项目根目录 `./geoip/`），并把 `GEOIP_DB_PATH` 设为该文件的绝对路径，详见第八节。
+
+### 7.4 日常运维命令
+
+| 操作 | 裸机（systemd） | Docker Compose |
+| --- | --- | --- |
+| 查看状态 | `systemctl status mini-siem` | `docker compose ps` |
+| 查看日志 | `journalctl -u mini-siem -f` | `docker compose logs -f backend` |
+| 重启服务 | `systemctl restart mini-siem` | `docker compose restart backend` |
+| 健康检查 | `curl http://127.0.0.1:8000/api/v1/health` | `curl http://127.0.0.1:8000/api/v1/health` |
+| 升级版本 | 见下方「升级」 | 见下方「升级」 |
+
+**升级（保留配置与数据）**
+
+```bash
+# 裸机：重跑安装脚本是幂等的，已存在的 .env 与 data/ 不会被覆盖
+cd mini-siem && git pull
+cd frontend && npm ci && npm run build && cd ..
+sudo bash deploy/install.sh
+
+# Docker
+git pull && docker compose up -d --build
+```
+
+**备份与恢复（SQLite）**
+
+```bash
+# 备份：停服务后复制数据库文件（WAL 模式下 -wal/-shm 也要一起复制）
+sudo systemctl stop mini-siem
+sudo cp /opt/mini-siem/data/siem.db* /root/siem-backup-$(date +%F)/
+sudo systemctl start mini-siem
+
+# 恢复：把备份文件放回 data/ 目录后重启即可
+```
+
 ## 八、GeoIP 攻击地图
 
 攻击地图需要 IP 归属地数据，按以下优先级解析：
