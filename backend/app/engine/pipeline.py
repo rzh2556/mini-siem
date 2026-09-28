@@ -11,7 +11,7 @@ from app.engine.matcher import RuleEngine, RuleHit, format_description, get_fiel
 from app.engine.rule_loader import RuleLoader
 from app.models.schemas import AlertSample, IngestEvent, IngestResponse, LogEvent, Rule
 from app.normalize.parsers import build_event
-from app.storage.es_client import ESStorage
+from app.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class IngestPipeline:
 
     def __init__(
         self,
-        storage: ESStorage,
+        storage: StorageBackend,
         loader: RuleLoader,
         engine: RuleEngine,
         aggregator: AlertAggregator,

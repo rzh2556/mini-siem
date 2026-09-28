@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.models.schemas import Alert, AlertSample, Rule
-from app.storage.es_client import ESStorage
+from app.storage import StorageBackend
 from app.utils.net import is_internal_ip
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,7 @@ class AlertAggregator:
 
     async def open_or_update(
         self,
-        storage: ESStorage,
+        storage: StorageBackend,
         rule: Rule,
         group_key: str,
         fields: dict[str, Any],

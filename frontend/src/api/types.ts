@@ -16,7 +16,10 @@ export type RuleType = 'match' | 'threshold' | 'first_seen';
 export interface HealthResponse {
   status: 'ok' | 'degraded';
   version: string;
-  elasticsearch: boolean;
+  /** 当前使用的存储后端：sqlite / elasticsearch */
+  backend: string;
+  /** 存储后端是否可用 */
+  storage: boolean;
   rules_loaded: number;
   rules_enabled: number;
 }

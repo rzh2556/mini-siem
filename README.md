@@ -4,7 +4,7 @@
 
 ```
                      ┌────────────────────────────────────────────────┐
-   被监控主机         │              Mini SIEM 服务端（Docker）          │
+   被监控主机         │            Mini SIEM 服务端（Docker / 裸机）        │
  ┌──────────────┐    │                                                │
  │ Linux 服务器  │    │   ┌───────────┐   ┌────────────┐   ┌────────┐  │
  │  nginx/ssh   │──┐ │   │ FastAPI   │──▶│ 规则引擎    │──▶│ 告警聚合 │  │
@@ -13,8 +13,8 @@
  ┌──────────────┐  ├─┼──▶│  /ingest  │   └────────────┘        │      │
  │ Windows 服务器│  │ │   └───────────┘                         ▼      │
  │  事件日志     │──┘ │     归一化解析        ┌───────────────────────┐ │
- │ (pywin32)    │    │   Nginx/Apache/SSH/    │ Elasticsearch 存储     │ │
- └──────────────┘    │   Windows/Syslog       │ 日志索引 + 告警索引     │ │
+ │ (pywin32)    │    │   Nginx/Apache/SSH/    │ SQLite / ES 存储       │ │
+ └──────────────┘    │   Windows/Syslog       │ 日志表 + 告警表        │ │
                      │                        └───────────┬───────────┘ │
                      │   ┌────────────────────────────────▼─────────┐ │
                      │   │ React + AntD 前端：Dashboard / 告警中心 /  │ │
@@ -32,34 +32,84 @@
 | 规则检测 | YAML 规则，支持正则/等值/包含/数值比较、`all_of`/`any_of` 组合、时间窗条件；三类规则：`match`（单条即告警）、`threshold`（窗口内 N 次计数）、`first_seen`（首次出现，识别陌生来源登录） |
 | 告警聚合降噪 | 冷却窗口内同规则同分组合并为一条告警并累加次数、IP 白名单、内网源抑制、最低等级过滤、样本留存 |
 | 可视化 | 指标卡、日志/告警趋势双轴折线图、等级分布、TOP 攻击源、TOP 规则、来源类型与主机分布、GeoIP 世界攻击地图 |
-| 运维 | Docker Compose 一键部署、规则文件热加载、日志索引按天切分并按保留期自动清理、健康检查接口 |
+| 运维 | systemd 裸机一键部署（低负载）或 Docker Compose、规则文件热加载、日志按保留期自动清理、健康检查接口 |
 
 ## 二、技术栈
 
-- **后端**：Python 3.11 + FastAPI + Pydantic v2 + elasticsearch-py（异步）
-- **存储**：Elasticsearch 8（日志索引 `siem-logs-YYYY.MM.DD` + 告警索引 `siem-alerts`）
+- **后端**：Python 3.11 + FastAPI + Pydantic v2（异步）
+- **存储**：**SQLite（默认，零依赖、低负载）** / Elasticsearch 8（可选，索引 `siem-logs-YYYY.MM.DD` + `siem-alerts`）
 - **规则引擎**：自研 YAML 规则引擎（正则 + 阈值滑动窗口 + 首次出现检测）
 - **前端**：React 18 + TypeScript + Vite + Ant Design 5 + ECharts + Leaflet
 - **采集**：纯标准库实现的轻量 Agent（Windows 事件采集额外需要 pywin32）
-- **部署**：Docker Compose（Elasticsearch + 后端 + Nginx 前端）
+- **部署**：systemd 裸机单进程（推荐，约 100~200MB 内存）或 Docker Compose
 
-> 关于 ClickHouse：本项目存储层集中在 `backend/app/storage/es_client.py`，只暴露写入/检索/聚合三类接口。ES 胜在日志全文检索与开箱即用的聚合分析；若你的场景是海量日志（每日 TB 级）且以统计聚合为主，可把该文件替换为 ClickHouse 实现，其余代码（解析、规则、告警、API）无需改动。
+> **存储层可插拔**：存储接口集中在 `backend/app/storage/`，`sqlite_client.py` 与 `es_client.py` 对外暴露完全相同的方法与返回结构，上层 API、规则引擎、前端无需任何改动。通过 `.env` 的 `STORAGE_BACKEND` 一键切换；若要接入 ClickHouse 等其他存储，只要照抄这两个文件的接口即可。
 
 ## 三、快速开始（服务器部署）
 
-### 1. 环境要求
+### 部署方式怎么选
 
-- Linux 服务器（2 核 4G 起，Elasticsearch 建议至少分配 1G 堆内存）
-- Docker 20.10+ 与 Docker Compose v2
-- 首次使用需调整内核参数（Elasticsearch 要求）：
+| 方式 | 内存占用 | 说明 |
+| --- | --- | --- |
+| **裸机 + SQLite（推荐）** | 约 100~200MB | 零依赖，单进程同时托管前后端，systemd 守护；适合 1~2G 小内存服务器 |
+| Docker + SQLite | 约 300~500MB | 保留容器隔离，但不启动 Elasticsearch |
+| Docker + Elasticsearch | 1.5G 以上 | 全文检索与聚合能力最强，适合 4G 以上内存 |
+
+> 内存不足时优先选第一种。Elasticsearch 单节点默认就要占 1.5~2G 内存，是整个系统负载的主要来源。
+
+### 方式一：裸机部署（低负载，推荐）
+
+**环境要求**：Linux 服务器 + Python 3.8+（脚本自动检测），**不需要 Docker，也不需要 nginx**——前端构建产物由后端直接托管。
+
+```bash
+# 1. 拉取代码（也可以直接把整个目录 scp 上传）
+git clone <你的仓库地址> mini-siem && cd mini-siem
+
+# 2. 本机构建前端产物（需要 Node 18+）
+cd frontend && npm ci && npm run build && cd ..
+
+# 3. 一键部署
+sudo bash deploy/install.sh
+```
+
+脚本会自动完成：安装 Python 依赖 → 创建 `minisiem` 系统用户（非 root 运行）→ 复制后端代码与规则到 `/opt/mini-siem` → 生成 `.env`（含随机采集令牌）→ 注册并启动 `mini-siem` systemd 服务 → 执行健康检查。
+
+```bash
+systemctl status mini-siem      # 查看运行状态
+journalctl -u mini-siem -f      # 实时日志
+curl http://127.0.0.1:8000/api/v1/health
+```
+
+可用环境变量覆盖默认值：
+
+```bash
+sudo INSTALL_DIR=/srv/mini-siem SERVICE_PORT=8000 bash deploy/install.sh
+```
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `INSTALL_DIR` | `/opt/mini-siem` | 安装目录 |
+| `SERVICE_PORT` | `8000` | 监听端口 |
+| `AGENT_TOKEN` | 随机生成 | 采集令牌 |
+| `PYPI_MIRROR` | 清华源 | pip 下载源 |
+
+> 若服务器上已有 Node，第 2 步可跳过，脚本会自动执行 `npm ci && npm run build`；但小内存机器上构建较慢且可能 OOM，推荐在本机构建后连同 `frontend/dist` 一起上传。
+> 修改配置：编辑 `/opt/mini-siem/.env` 后执行 `systemctl restart mini-siem`。
+> 记得在云服务器安全组 / 防火墙放行 `8000` 端口。
+
+### 方式二：Docker Compose 部署
+
+#### 1. 环境要求
+
+- Linux 服务器，Docker 20.10+ 与 Docker Compose v2
+- 默认（SQLite）2 核 2G 即可；启用 Elasticsearch 建议 2 核 4G 起，并调整内核参数：
 
 ```bash
 sudo sysctl -w vm.max_map_count=262144
-# 永久生效
-echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
+echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf   # 永久生效
 ```
 
-### 2. 启动
+#### 2. 启动
 
 ```bash
 git clone <你的仓库地址> mini-siem && cd mini-siem
@@ -68,21 +118,21 @@ vim .env          # 必须修改 AGENT_TOKEN；公网部署建议同时设置 AP
 docker compose up -d --build
 ```
 
-查看启动进度（首次启动 Elasticsearch 需 1~2 分钟）：
+默认使用 SQLite，**不会启动 Elasticsearch**。若需要 ES，先在 `.env` 中设置 `STORAGE_BACKEND=elasticsearch`，再用 `es` profile 启动（首次启动需 1~2 分钟）：
 
 ```bash
-docker compose logs -f backend
-# 出现 “Elasticsearch 连接成功，索引已就绪” 即为就绪
-curl http://127.0.0.1/api/v1/health
+docker compose --profile es up -d --build
+docker compose logs -f backend      # 观察就绪日志
 ```
 
-### 3. 访问
+#### 3. 访问
 
 | 地址 | 说明 |
 | --- | --- |
-| `http://<服务器IP>/` | 前端控制台（Dashboard / 告警 / 日志 / 攻击地图 / 规则） |
+| `http://<服务器IP>/` | 前端控制台（Docker 部署，经 nginx 80 端口） |
+| `http://<服务器IP>:8000/` | 前端控制台（裸机部署，后端直接托管） |
 | `http://<服务器IP>:8000/docs` | 后端 Swagger API 文档 |
-| `http://127.0.0.1:9200` | Elasticsearch（仅本机可访问） |
+| `http://127.0.0.1:9200` | Elasticsearch（仅本机可访问，仅启用 es profile 时存在） |
 
 ### 4. 推送演示数据验证
 
@@ -228,8 +278,11 @@ suppression:
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `ES_URL` | `http://elasticsearch:9200` | Elasticsearch 地址 |
-| `ES_RETENTION_DAYS` | `30` | 日志索引保留天数，超期自动删除 |
+| `STORAGE_BACKEND` | `sqlite` | 存储后端：`sqlite`（零依赖、低负载）/ `elasticsearch` |
+| `SQLITE_PATH` | `data/siem.db` | SQLite 数据库文件路径 |
+| `FRONTEND_DIST` | 空 | 前端构建产物目录，非空且存在时由后端直接托管前端（免装 nginx） |
+| `ES_URL` | `http://elasticsearch:9200` | Elasticsearch 地址（`STORAGE_BACKEND=elasticsearch` 时生效） |
+| `ES_RETENTION_DAYS` | `30` | 日志保留天数，超期自动清理（两种后端都生效） |
 | `AGENT_TOKEN` | `change-me-agent-token` | Agent 上报令牌，**必须修改** |
 | `API_TOKEN` | 空 | 控制台/API 访问令牌，留空则不校验 |
 | `GEOIP_DB_PATH` | `/app/geoip/GeoLite2-City.mmdb` | GeoLite2 离线库路径 |
@@ -238,7 +291,7 @@ suppression:
 | `MIN_ALERT_SEVERITY` | `low` | 低于该等级的告警丢弃 |
 | `IP_WHITELIST` | `127.0.0.1,::1` | 全局白名单 IP |
 | `IGNORE_INTERNAL_SRC` | `false` | 是否忽略内网源 IP 的告警 |
-| `ES_HEAP` | `1g` | Elasticsearch JVM 堆大小 |
+| `ES_HEAP` | `1g` | Elasticsearch JVM 堆大小（仅 Docker + es profile 使用） |
 
 ## 八、GeoIP 攻击地图
 
@@ -274,8 +327,11 @@ suppression:
 
 ```
 mini-siem/
-├── docker-compose.yml            # 一键部署编排
+├── docker-compose.yml            # 一键部署编排（ES 为可选 profile）
 ├── .env.example                  # 环境变量模板
+├── deploy/
+│   ├── install.sh                # 裸机一键部署脚本（低负载，systemd）
+│   └── mini-siem.service         # systemd 单元文件
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
@@ -284,14 +340,16 @@ mini-siem/
 │   │   ├── web_attacks.yml
 │   │   └── windows_events.yml
 │   └── app/
-│       ├── main.py               # 应用入口与后台维护任务
-│       ├── config.py             # 配置
+│       ├── main.py               # 应用入口、后台维护任务、前端静态托管
+│       ├── config.py             # 配置（存储后端开关等）
 │       ├── state.py              # 全局单例容器
 │       ├── api/                  # ingest / logs / alerts / rules / stats
 │       ├── normalize/parsers.py  # 各来源日志归一化解析
 │       ├── engine/               # rule_loader / matcher / aggregator / pipeline / geoip
 │       ├── models/schemas.py     # 数据模型
-│       └── storage/es_client.py  # Elasticsearch 存储层
+│       └── storage/              # 可插拔存储层
+│           ├── sqlite_client.py  # SQLite 实现（默认，低负载）
+│           └── es_client.py      # Elasticsearch 实现（可选）
 ├── frontend/                     # React 控制台（Vite + AntD + ECharts + Leaflet）
 ├── agent/                        # 采集 Agent（Linux/Windows 通用）
 └── scripts/generate_demo_logs.py # 演示数据生成
@@ -300,12 +358,18 @@ mini-siem/
 ## 十一、常见问题
 
 **Elasticsearch 启动失败 / 容器反复重启**
-先确认 `vm.max_map_count >= 262144`；内存不足时调小 `ES_HEAP`（如 `512m`）或升级服务器配置。
+先确认 `vm.max_map_count >= 262144`；内存不足时改用默认的 SQLite 后端（`STORAGE_BACKEND=sqlite`，不启用 es profile），或调小 `ES_HEAP`（如 `512m`）。
 
 **日志进不来、日志检索为空**
 1. 检查 Agent 日志中的报错，确认 `server.url` 与 `token` 正确；
-2. `curl http://<服务器>:8000/api/v1/health` 确认 `elasticsearch: true`；
+2. `curl http://<服务器>:8000/api/v1/health`，确认返回 `"status":"ok"` 且 `"storage":true`（同时会显示当前 `backend` 是 sqlite 还是 elasticsearch）；
 3. 日志只有在**新产生**时才会被采集，历史日志需用 `/ingest/raw` 或控制台「上传日志文件」导入。
+
+**宿主机内存被占满 / 负载过高**
+系统默认使用 SQLite + 单进程，正常只需 100~200MB 内存。若发现占用很高，通常是启用了 Elasticsearch（`docker compose --profile es`），执行 `docker compose --profile es down` 停掉并改用默认配置即可。
+
+**SQLite 后端能撑多少数据**
+单机建议日志总量控制在百万级以内；默认保留 30 天，可通过 `ES_RETENTION_DAYS` 调整。数据量继续增长时再切换 Elasticsearch 后端，接口完全一致、无需改代码。
 
 **告警迟迟不出现**
 频率类规则需要达到阈值（例如 SSH 暴力破解 300 秒内 5 次）；另外检查 `.env` 的 `MIN_ALERT_SEVERITY` 是否把低等级告警过滤掉了。
@@ -314,19 +378,32 @@ mini-siem/
 参考第八节配置 GeoIP；内网 IP 与保留地址不会解析，属正常现象。
 
 **时间显示不对**
-容器已设置 `TZ=Asia/Shanghai`，前端按浏览器本地时区展示；如服务器时区不同，可在 `docker-compose.yml` 中调整 `TZ`。
+服务已设置 `TZ=Asia/Shanghai`（Docker 在 `docker-compose.yml` 中，裸机在 systemd 单元中），前端按浏览器本地时区展示。
 
 ## 十二、安全加固建议
 
 1. 修改默认 `AGENT_TOKEN`，并设置 `API_TOKEN` 防止控制台被未授权访问。
-2. 生产环境请在 Nginx 前置 HTTPS，或只通过内网/VPN 暴露控制台端口。
-3. Elasticsearch 端口已在编排中限制为 `127.0.0.1` 访问，请勿改为 `0.0.0.0`。
+2. 生产环境请前置 HTTPS（裸机部署可用 Nginx 或 Caddy 反代 8000 端口），或只通过内网/VPN 暴露控制台端口。
+3. 若启用了 Elasticsearch，其端口已在编排中限制为 `127.0.0.1` 访问，请勿改为 `0.0.0.0`。
 4. 远程 Agent 上报建议走内网或专用通道，避免令牌在公网明文传输。
-5. 定期检查 `ES_RETENTION_DAYS` 与磁盘水位，避免磁盘写满导致 ES 进入只读状态。
+5. 定期检查 `ES_RETENTION_DAYS`、磁盘水位以及数据库文件大小（默认 `data/siem.db`，另有 `siem.db-wal`），避免磁盘写满导致写入失败。
 
 ## 十三、停止与卸载
 
+**裸机部署（systemd）**
+
 ```bash
-docker compose down          # 停止服务（保留数据）
-docker compose down -v       # 停止并删除数据卷（清空所有日志与告警）
+sudo systemctl stop mini-siem        # 停止服务
+sudo systemctl disable mini-siem     # 取消开机自启
+sudo rm -rf /opt/mini-siem           # 删除程序与数据库（数据不可恢复）
+sudo rm -f /etc/systemd/system/mini-siem.service && sudo systemctl daemon-reload
+sudo userdel minisiem
+```
+
+**Docker Compose**
+
+```bash
+docker compose down                 # 停止服务（保留数据）
+docker compose --profile es down    # 若启用过 es profile，需带上该参数
+docker compose down -v              # 停止并删除数据卷（清空所有日志与告警）
 ```

@@ -6,13 +6,13 @@ from app.engine.geoip import GeoIPResolver
 from app.engine.matcher import RuleEngine
 from app.engine.pipeline import IngestPipeline
 from app.engine.rule_loader import RuleLoader
-from app.storage.es_client import ESStorage
+from app.storage import StorageBackend
 
 
 class AppState:
     """保存全局单例组件，供 API 依赖注入使用。"""
 
-    storage: ESStorage | None = None
+    storage: StorageBackend | None = None
     loader: RuleLoader | None = None
     engine: RuleEngine | None = None
     aggregator: AlertAggregator | None = None

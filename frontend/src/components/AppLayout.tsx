@@ -111,8 +111,8 @@ export default function AppLayout({ children }: AppLayoutProps) {
           <Tooltip
             title={
               health
-                ? `版本 ${health.version} · 规则 ${health.rules_enabled}/${health.rules_loaded} 启用 · ES ${
-                    health.elasticsearch ? '已连接' : '未连接'
+                ? `版本 ${health.version} · 规则 ${health.rules_enabled}/${health.rules_loaded} 启用 · 存储 ${health.backend} ${
+                    health.storage ? '已连接' : '未连接'
                   }`
                 : '暂时无法获取后端信息'
             }

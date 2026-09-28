@@ -1,10 +1,17 @@
 # Mini SIEM 一键部署编排
-# 启动: docker compose up -d --build
-# 首次启动 Elasticsearch 需要 1-2 分钟，可用 docker compose logs -f backend 观察就绪日志
+#
+# 默认（低负载，推荐 2G 内存以下）：SQLite + 后端 + nginx 前端，不启动 Elasticsearch
+#   docker compose up -d --build
+#
+# 需要 Elasticsearch 的完整检索能力时（至少 4G 内存）：先设置 STORAGE_BACKEND=elasticsearch
+#   docker compose --profile es up -d --build
+#   首次启动 Elasticsearch 需要 1-2 分钟，可用 docker compose logs -f backend 观察就绪日志
 name: mini-siem
 
 services:
   elasticsearch:
+    # 可选组件：只有显式启用 es profile 时才会创建
+    profiles: ["es"]
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
     container_name: siem-elasticsearch
     environment:
@@ -39,6 +46,9 @@ services:
     # 说明：以下配置会自动读取同目录 .env 文件中的同名变量，未提供时使用默认值，
     # 因此即使没有创建 .env 也能正常启动（生产环境请务必修改 AGENT_TOKEN）。
     environment:
+      # 存储后端：sqlite（默认，零依赖）/ elasticsearch（需配合 --profile es 使用）
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-sqlite}
+      - SQLITE_PATH=/app/data/siem.db
       - ES_URL=http://elasticsearch:9200
       - ES_INDEX_PREFIX=${ES_INDEX_PREFIX:-siem}
       - ES_RETENTION_DAYS=${ES_RETENTION_DAYS:-30}
@@ -58,14 +68,18 @@ services:
     volumes:
       # 挂载规则目录：修改 YAML 后 60 秒内自动热加载，无需重启
       - ./backend/rules:/app/rules
+      # SQLite 数据目录（STORAGE_BACKEND=sqlite 时使用），持久化到宿主机
+      - ./data:/app/data
       # GeoIP 离线库目录（可选）
       - ./geoip:/app/geoip
     ports:
       # 需要被远程 Agent 直连时开放；前端已通过 nginx 反向代理 /api，可不暴露
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
+      # Elasticsearch 为可选组件，未启用 es profile 时后端仍以 SQLite 正常启动
       elasticsearch:
         condition: service_healthy
+        required: false
     restart: unless-stopped
     networks: [siem]
 

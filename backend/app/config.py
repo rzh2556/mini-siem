@@ -9,10 +9,20 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # ---------- 存储后端 ----------
+    # sqlite（默认，零依赖、低负载）/ elasticsearch（功能全但吃内存）
+    storage_backend: str = "sqlite"
+    sqlite_path: str = "data/siem.db"
+
     # ---------- Elasticsearch ----------
     es_url: str = "http://localhost:9200"
     es_index_prefix: str = "siem"
+    # 日志保留天数：SQLite 后端同样使用该值清理过期日志
     es_retention_days: int = 30
+
+    # ---------- 前端静态资源 ----------
+    # 非空且目录存在时，由后端直接托管前端构建产物（可省掉 nginx 容器）
+    frontend_dist: str = ""
 
     # ---------- 服务 ----------
     agent_token: str = "change-me-agent-token"
