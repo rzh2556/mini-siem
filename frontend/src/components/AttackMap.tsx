@@ -1,4 +1,4 @@
-/** 攻击地图组件：基于 Leaflet + OpenStreetMap 展示攻击源地理分布。 */
+/** 攻击地图组件：基于 Leaflet + 高德瓦片展示攻击源地理分布。 */
 import { useEffect, useMemo, useRef } from 'react';
 import type { MutableRefObject } from 'react';
 import type { CircleMarker as LeafletCircleMarker } from 'leaflet';
@@ -92,9 +92,12 @@ export default function AttackMap({ attackers, height = 420, focusIp, onSelect }
         scrollWheelZoom
         style={{ height: '100%', width: '100%' }}
       >
+        {/* 国内直连 OSM 官方瓦片常超时导致底图空白，改用高德瓦片（中文标注、国内 CDN） */}
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.amap.com/">高德地图</a>'
+          url="https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+          subdomains={['1', '2', '3', '4']}
+          maxZoom={18}
         />
         <MapFocus markers={markers} focusIp={focusIp} markerRefs={markerRefs} />
         {markers.map((item) => (
