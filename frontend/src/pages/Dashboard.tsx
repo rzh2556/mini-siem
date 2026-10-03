@@ -1,6 +1,6 @@
 /** 仪表盘页面：展示核心指标、日志/告警趋势、分布图与 TOP 排行，30 秒自动刷新。 */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Card, Col, Row, Segmented, Table, Tag } from 'antd';
+import { Card, Col, Empty, Row, Segmented, Table, Tag } from 'antd';
 import { AlertOutlined, BugOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
@@ -26,6 +26,7 @@ const RANGE_OPTIONS = [
   { label: '最近 6 小时', value: 6 },
   { label: '最近 24 小时', value: 24 },
   { label: '最近 7 天', value: 168 },
+  { label: '最近 30 天', value: 720 },
 ];
 
 /** 时间范围对应的趋势图分桶间隔（与后端允许的 interval 取值保持一致） */
@@ -34,6 +35,7 @@ const INTERVAL_BY_HOURS: Record<number, string> = {
   6: '30m',
   24: '1h',
   168: '6h',
+  720: '1d',
 };
 
 /** 图表坐标轴与分割线配色 */
@@ -268,6 +270,8 @@ export default function Dashboard() {
 
   const severityDistribution = distribution ?? { critical: 0, high: 0, medium: 0, low: 0 };
   const seriousAlerts = severityDistribution.critical + severityDistribution.high;
+  // 当前统计范围内是否真的有告警，用于区分“没有数据”和“图表渲染失败”
+  const hasSeverityData = Object.values(severityDistribution).some((value) => value > 0);
   const alertsTotal = overview?.alerts_total ?? 0;
   const openAlerts = overview?.open_alerts ?? 0;
   const rangeLabel = RANGE_OPTIONS.find((item) => item.value === hours)?.label ?? '';
@@ -352,12 +356,22 @@ export default function Dashboard() {
             title={<span className="card-title">告警等级分布</span>}
             loading={loading && !overview}
           >
-            <ReactECharts
-              className="chart-block"
-              style={{ height: 320 }}
-              option={severityOption}
-              notMerge
-            />
+            {hasSeverityData ? (
+              <ReactECharts
+                className="chart-block"
+                style={{ height: 320 }}
+                option={severityOption}
+                notMerge
+              />
+            ) : (
+              // 无数据时给出明确空态，避免被误认为“日志上传没生效”
+              <div style={{ height: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={`${rangeLabel}内暂无告警，可切换到更大的统计范围`}
+                />
+              </div>
+            )}
           </Card>
         </Col>
       </Row>
