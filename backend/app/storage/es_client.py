@@ -142,6 +142,11 @@ class ESStorage:
         ts = ts or datetime.now(timezone.utc)
         return f"{self.prefix}-logs-{ts.strftime('%Y.%m.%d')}"
 
+    @property
+    def upload_index(self) -> str:
+        """日志上传批次索引名。"""
+        return f"{self.prefix}-uploads"
+
     # ---------------- 写入 ----------------
 
     async def bulk_index_logs(self, docs: list[tuple[str, dict[str, Any]]]) -> int:
@@ -157,6 +162,60 @@ class ESStorage:
             failed = sum(1 for item in resp["items"] if item.get("index", {}).get("error"))
             logger.warning("批量写入存在 %s 条失败记录", failed)
         return len(docs)
+
+    # ---------------- 上传批次与删除 ----------------
+
+    async def record_upload_batch(self, meta: dict[str, Any]) -> str:
+        """记录一次日志文件上传的批次信息，便于后续按批次查看与删除。"""
+        await self.client.index(
+            index=self.upload_index,
+            id=meta["batch_id"],
+            document=meta,
+            refresh="wait_for",
+        )
+        return meta["batch_id"]
+
+    async def list_upload_batches(self, page: int = 1, size: int = 20) -> dict[str, Any]:
+        """分页列出上传批次（按上传时间倒序），并附带当前实际留存的日志条数。"""
+        body: dict[str, Any] = {
+            "query": {"match_all": {}},
+            "from": max(0, (page - 1) * size),
+            "size": size,
+            "sort": [{"created_at_epoch": {"order": "desc"}}],
+            "track_total_hits": True,
+        }
+        resp = await self.client.search(index=self.upload_index, **body)
+        items: list[dict[str, Any]] = []
+        for hit in resp["hits"]["hits"]:
+            item = {"batch_id": hit["_id"], **hit["_source"]}
+            item["current"] = await self.count(
+                self.log_index_pattern, {"term": {"batch_id": hit["_id"]}}
+            )
+            items.append(item)
+        return {"total": resp["hits"]["total"]["value"], "items": items}
+
+    async def delete_upload_batch(self, batch_id: str) -> int:
+        """删除某次上传的全部日志与批次记录，返回删除的日志条数。"""
+        resp = await self.client.delete_by_query(
+            index=self.log_index_pattern,
+            query={"term": {"batch_id": batch_id}},
+            refresh=True,
+            conflicts="proceed",
+        )
+        removed = int(resp.get("deleted", 0))
+        try:
+            await self.client.delete(index=self.upload_index, id=batch_id, refresh=True)
+        except NotFoundError:
+            pass
+        return removed
+
+    async def delete_log(self, doc_id: str) -> bool:
+        """按 ID 删除单条日志，日志不存在时返回 False。"""
+        try:
+            await self.client.delete(index=self.log_index_pattern, id=doc_id, refresh=True)
+            return True
+        except NotFoundError:
+            return False
 
     async def index_alert(self, doc: dict[str, Any], alert_id: str | None = None) -> str:
         """写入或覆盖一条告警，返回告警 ID。"""

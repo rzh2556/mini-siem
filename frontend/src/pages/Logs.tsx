@@ -7,9 +7,12 @@ import {
   Card,
   Col,
   Descriptions,
+  Drawer,
   Empty,
   Form,
   Input,
+  message,
+  Popconfirm,
   Row,
   Select,
   Table,
@@ -17,8 +20,14 @@ import {
   Tooltip,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { fetchLogFilters, searchLogs } from '../api/endpoints';
-import type { LogEvent, LogFilters, LogQuery } from '../api/types';
+import {
+  deleteLog,
+  deleteUploadBatch,
+  fetchLogFilters,
+  listUploadBatches,
+  searchLogs,
+} from '../api/endpoints';
+import type { LogEvent, LogFilters, LogQuery, UploadBatchItem } from '../api/types';
 import { formatTime } from '../utils/format';
 import UploadLogModal from '../components/UploadLogModal';
 
@@ -74,6 +83,12 @@ export default function Logs() {
   const [filters, setFilters] = useState<LogFilters>({ source_types: [], hosts: [], levels: [] });
   const [keyword, setKeyword] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
+  // 上传批次管理抽屉：展示每次文件上传的记录，支持整批删除
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batches, setBatches] = useState<UploadBatchItem[]>([]);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [batchPage, setBatchPage] = useState(1);
+  const [batchLoading, setBatchLoading] = useState(false);
 
   /** 从 URL 查询参数解析检索条件，默认不限时间 */
   const query: LogQuery = useMemo(() => {
@@ -133,6 +148,43 @@ export default function Logs() {
   const handleUploadSuccess = () => {
     loadFilters();
     load();
+  };
+
+  /** 加载上传批次列表（按页拉取，默认每页 10 条） */
+  const loadBatches = useCallback((page = 1) => {
+    setBatchLoading(true);
+    listUploadBatches(page, 10)
+      .then((data) => {
+        setBatches(data.items);
+        setBatchTotal(data.total);
+        setBatchPage(page);
+      })
+      .catch(() => undefined)
+      .finally(() => setBatchLoading(false));
+  }, []);
+
+  /** 删除某条日志，成功后刷新检索结果与批次列表 */
+  const handleDeleteLog = (id: string) => {
+    deleteLog(id)
+      .then(() => {
+        message.success('已删除该条日志');
+        load();
+        if (batchOpen) {
+          loadBatches(batchPage);
+        }
+      })
+      .catch(() => undefined);
+  };
+
+  /** 删除某次上传产生的全部日志，成功后刷新批次列表与检索结果 */
+  const handleDeleteBatch = (batchId: string) => {
+    deleteUploadBatch(batchId)
+      .then((res) => {
+        message.success(`已删除该批次的 ${res.deleted} 条日志`);
+        loadBatches(1);
+        load();
+      })
+      .catch(() => undefined);
   };
 
   // 搜索框与筛选表单跟随 URL 变化（例如从告警页跳转携带 src_ip 时）
@@ -347,6 +399,29 @@ export default function Logs() {
           '-'
         ),
     },
+    {
+      title: '操作',
+      key: 'action',
+      width: 80,
+      fixed: 'right',
+      render: (_value, record) =>
+        record.id ? (
+          <Popconfirm
+            title="删除这条日志？"
+            description="删除后不可恢复"
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={() => handleDeleteLog(record.id as string)}
+          >
+            <Button type="link" danger size="small">
+              删除
+            </Button>
+          </Popconfirm>
+        ) : (
+          '-'
+        ),
+    },
   ];
 
   return (
@@ -357,6 +432,14 @@ export default function Logs() {
           <div className="page-subtitle">支持 AND / OR / NOT 全文语法与多维条件过滤</div>
         </div>
         <div className="page-toolbar">
+          <Button
+            onClick={() => {
+              setBatchOpen(true);
+              loadBatches(1);
+            }}
+          >
+            上传记录
+          </Button>
           <Button type="primary" onClick={() => setUploadOpen(true)}>
             上传日志文件
           </Button>
@@ -444,7 +527,7 @@ export default function Logs() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          scroll={{ x: 1300 }}
+          scroll={{ x: 1400 }}
           locale={{ emptyText: <Empty description="暂无符合条件的日志" /> }}
           expandable={{
             expandedRowRender: renderExpanded,
@@ -467,6 +550,84 @@ export default function Logs() {
         onClose={() => setUploadOpen(false)}
         onSuccess={handleUploadSuccess}
       />
+
+      <Drawer
+        title="上传记录（可按批次整批删除）"
+        width={780}
+        open={batchOpen}
+        onClose={() => setBatchOpen(false)}
+        extra={
+          <Button size="small" onClick={() => loadBatches(batchPage)}>
+            刷新
+          </Button>
+        }
+      >
+        <Table<UploadBatchItem>
+          rowKey="batch_id"
+          size="small"
+          loading={batchLoading}
+          dataSource={batches}
+          locale={{ emptyText: <Empty description="暂无上传记录" /> }}
+          pagination={{
+            current: batchPage,
+            pageSize: 10,
+            total: batchTotal,
+            showSizeChanger: false,
+            showTotal: (count) => `共 ${count} 次上传`,
+            onChange: (page) => loadBatches(page),
+          }}
+          columns={[
+            {
+              title: '文件名',
+              dataIndex: 'filename',
+              key: 'filename',
+              render: (value?: string | null) => value || '-',
+            },
+            {
+              title: '主机',
+              dataIndex: 'host',
+              key: 'host',
+              width: 130,
+              render: (value?: string | null) => value || '-',
+            },
+            {
+              title: '类型',
+              dataIndex: 'source_type',
+              key: 'source_type',
+              width: 90,
+              render: (value?: string | null) => value || '-',
+            },
+            { title: '入库', dataIndex: 'accepted', key: 'accepted', width: 70 },
+            { title: '剩余', dataIndex: 'current', key: 'current', width: 70 },
+            {
+              title: '上传时间',
+              dataIndex: 'created_at',
+              key: 'created_at',
+              width: 165,
+              render: (value?: string | null) => (value ? formatTime(value) : '-'),
+            },
+            {
+              title: '操作',
+              key: 'action',
+              width: 96,
+              render: (_value, record) => (
+                <Popconfirm
+                  title="删除整批日志？"
+                  description={`将删除该次上传剩余的 ${record.current} 条日志`}
+                  okText="删除"
+                  okButtonProps={{ danger: true }}
+                  cancelText="取消"
+                  onConfirm={() => handleDeleteBatch(record.batch_id)}
+                >
+                  <Button type="link" danger size="small">
+                    整批删除
+                  </Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+      </Drawer>
     </div>
   );
 }

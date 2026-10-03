@@ -6,6 +6,7 @@ import type {
   AlertStatus,
   AttackersResponse,
   CurrentUser,
+  DeleteResult,
   EditableSettings,
   GeoResponse,
   HealthResponse,
@@ -25,6 +26,7 @@ import type {
   SettingsSaveResponse,
   SystemInfo,
   TimelineResponse,
+  UploadBatchList,
   UploadResult,
 } from './types';
 
@@ -120,6 +122,24 @@ export async function searchLogs(params: LogQuery): Promise<PageResult<LogEvent>
 /** 获取日志检索可用的筛选值（来源类型、主机、等级）。 */
 export async function fetchLogFilters(hours = 24): Promise<LogFilters> {
   const { data } = await client.get<LogFilters>('/logs/filters', { params: { hours } });
+  return data;
+}
+
+/** 分页查询日志文件上传批次列表（用于按批次管理/删除）。 */
+export async function listUploadBatches(page = 1, size = 20): Promise<UploadBatchList> {
+  const { data } = await client.get<UploadBatchList>('/logs/uploads', { params: { page, size } });
+  return data;
+}
+
+/** 删除某次上传文件产生的整批日志。 */
+export async function deleteUploadBatch(batchId: string): Promise<DeleteResult> {
+  const { data } = await client.delete<DeleteResult>(`/logs/uploads/${batchId}`);
+  return data;
+}
+
+/** 删除单条日志（按日志 ID）。 */
+export async function deleteLog(logId: string): Promise<DeleteResult> {
+  const { data } = await client.delete<DeleteResult>(`/logs/${logId}`);
   return data;
 }
 

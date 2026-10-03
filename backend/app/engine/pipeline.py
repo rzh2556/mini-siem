@@ -46,9 +46,17 @@ class IngestPipeline:
     # ---------------- 主流程 ----------------
 
     async def process(
-        self, host: str, source_type: str, events: list[IngestEvent]
+        self,
+        host: str,
+        source_type: str,
+        events: list[IngestEvent],
+        batch_id: str | None = None,
     ) -> IngestResponse:
-        """处理一批上报事件，返回接收条数与产生/合并的告警数。"""
+        """处理一批上报事件，返回接收条数与产生/合并的告警数。
+
+        batch_id 为日志文件上传批次号（Agent 直报时为 None），会写入每条日志，
+        供日志检索页按批次整体查看与删除。
+        """
         geo_cache: dict[str, Any] = {}
         docs: list[tuple[str, dict[str, Any]]] = []
         alert_count = 0
@@ -62,6 +70,7 @@ class IngestPipeline:
                 continue
             if item.timestamp:
                 event.timestamp = item.timestamp
+            event.batch_id = batch_id
             accepted += 1
 
             if event.src_ip and event.src_ip not in geo_cache:

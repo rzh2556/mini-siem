@@ -75,6 +75,7 @@ FIELD_MAP: dict[str, str] = {
     "count": "count",
     "first_seen": "first_seen",
     "last_seen": "last_seen",
+    "batch_id": "batch_id",
 }
 
 # 日志表列定义（顺序即插入顺序）
@@ -85,6 +86,7 @@ LOG_COLUMNS = (
     "status_code", "user_agent", "event_id", "channel", "process_name", "command",
     "message", "raw", "tags", "matched_rules",
     "geo_country", "geo_country_code", "geo_city", "geo_lat", "geo_lon",
+    "batch_id",
 )
 
 ALERT_COLUMNS = (
@@ -106,12 +108,23 @@ CREATE TABLE IF NOT EXISTS logs (
     status_code INTEGER, user_agent TEXT,
     event_id INTEGER, channel TEXT, process_name TEXT, command TEXT,
     message TEXT, raw TEXT, tags TEXT, matched_rules TEXT,
-    geo_country TEXT, geo_country_code TEXT, geo_city TEXT, geo_lat REAL, geo_lon REAL
+    geo_country TEXT, geo_country_code TEXT, geo_city TEXT, geo_lat REAL, geo_lon REAL,
+    batch_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts_epoch);
 CREATE INDEX IF NOT EXISTS idx_logs_src_ip ON logs(src_ip);
 CREATE INDEX IF NOT EXISTS idx_logs_host ON logs(host);
 CREATE INDEX IF NOT EXISTS idx_logs_source ON logs(source_type);
+CREATE INDEX IF NOT EXISTS idx_logs_batch ON logs(batch_id);
+
+CREATE TABLE IF NOT EXISTS upload_batches (
+    batch_id TEXT PRIMARY KEY,
+    filename TEXT, host TEXT, source_type TEXT,
+    total INTEGER DEFAULT 0, accepted INTEGER DEFAULT 0, alerts INTEGER DEFAULT 0,
+    size_bytes INTEGER DEFAULT 0, note TEXT,
+    created_at TEXT, created_at_epoch INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_upload_batches_ts ON upload_batches(created_at_epoch);
 
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
@@ -287,6 +300,7 @@ def _log_row_values(doc: dict[str, Any]) -> tuple[Any, ...]:
         "geo_city": geo.get("city"),
         "geo_lat": geo.get("lat"),
         "geo_lon": geo.get("lon"),
+        "batch_id": doc.get("batch_id"),
     }
     return tuple(row[column] for column in LOG_COLUMNS)
 
@@ -331,6 +345,7 @@ def _row_to_log(row: sqlite3.Row) -> dict[str, Any]:
         "query_str": "query", "status_code": "status_code", "user_agent": "user_agent",
         "event_id": "event_id", "channel": "channel", "process_name": "process",
         "command": "command", "message": "message", "raw": "raw",
+        "batch_id": "batch_id",
     }
     for column, field in mapping.items():
         value = row[column]
@@ -378,10 +393,18 @@ class SQLiteStorage:
     # ---------------- 内部工具 ----------------
 
     def _init_schema(self) -> None:
-        """创建日志表、告警表与索引（幂等）。"""
+        """创建日志表、告警表与索引（幂等），并补齐老库缺失的列。"""
         with self._lock:
             self._conn.executescript(SCHEMA_SQL)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        """老版本数据库升级：为 logs 表补充 batch_id 列（用于按上传批次删除日志）。"""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(logs)")}
+        if "batch_id" not in columns:
+            self._conn.execute("ALTER TABLE logs ADD COLUMN batch_id TEXT")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_batch ON logs(batch_id)")
 
     async def _call(self, func, *args) -> Any:
         """在线程中加锁执行同步数据库操作，避免阻塞事件循环。"""
@@ -443,6 +466,86 @@ class SQLiteStorage:
         )
         self._conn.commit()
         return len(rows)
+
+    # ---------------- 上传批次与删除 ----------------
+
+    async def record_upload_batch(self, meta: dict[str, Any]) -> str:
+        """记录一次日志文件上传的批次信息，便于后续按批次查看与删除。"""
+        return await self._call(self._record_upload_batch_sync, meta)
+
+    def _record_upload_batch_sync(self, meta: dict[str, Any]) -> str:
+        """同步写入批次元数据（同一 batch_id 覆盖更新）。"""
+        batch_id = meta["batch_id"]
+        self._conn.execute(
+            "INSERT OR REPLACE INTO upload_batches "
+            "(batch_id, filename, host, source_type, total, accepted, alerts, "
+            " size_bytes, note, created_at, created_at_epoch) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                batch_id,
+                meta.get("filename"),
+                meta.get("host"),
+                meta.get("source_type"),
+                int(meta.get("total") or 0),
+                int(meta.get("accepted") or 0),
+                int(meta.get("alerts") or 0),
+                int(meta.get("size_bytes") or 0),
+                meta.get("note"),
+                meta.get("created_at"),
+                int(meta.get("created_at_epoch") or 0),
+            ),
+        )
+        self._conn.commit()
+        return batch_id
+
+    async def list_upload_batches(self, page: int = 1, size: int = 20) -> dict[str, Any]:
+        """分页列出上传批次（按上传时间倒序），并附带当前实际留存的日志条数。"""
+        return await self._call(self._list_upload_batches_sync, page, size)
+
+    def _list_upload_batches_sync(self, page: int, size: int) -> dict[str, Any]:
+        """同步查询批次列表。"""
+        total = int(self._conn.execute("SELECT COUNT(*) FROM upload_batches").fetchone()[0])
+        rows = self._conn.execute(
+            "SELECT * FROM upload_batches ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?",
+            [size, max(0, (page - 1) * size)],
+        ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            # 实际留存条数实时统计，避免中途删除或写入失败导致与元数据不一致
+            item["current"] = int(
+                self._conn.execute(
+                    "SELECT COUNT(*) FROM logs WHERE batch_id = ?", [row["batch_id"]]
+                ).fetchone()[0]
+            )
+            items.append(item)
+        return {"total": total, "items": items}
+
+    async def delete_upload_batch(self, batch_id: str) -> int:
+        """删除某次上传的全部日志与批次记录，返回删除的日志条数。"""
+        return await self._call(self._delete_upload_batch_sync, batch_id)
+
+    def _delete_upload_batch_sync(self, batch_id: str) -> int:
+        """同步按批次删除日志行。"""
+        cursor = self._conn.execute("DELETE FROM logs WHERE batch_id = ?", [batch_id])
+        removed = cursor.rowcount or 0
+        self._conn.execute("DELETE FROM upload_batches WHERE batch_id = ?", [batch_id])
+        self._conn.commit()
+        return removed
+
+    async def delete_log(self, log_id: str) -> bool:
+        """按 ID 删除单条日志，日志不存在时返回 False。"""
+        return await self._call(self._delete_log_sync, log_id)
+
+    def _delete_log_sync(self, log_id: str) -> bool:
+        """同步删除单条日志行。"""
+        try:
+            numeric_id = int(log_id)
+        except (TypeError, ValueError):
+            return False
+        cursor = self._conn.execute("DELETE FROM logs WHERE id = ?", [numeric_id])
+        self._conn.commit()
+        return (cursor.rowcount or 0) > 0
 
     async def index_alert(self, doc: dict[str, Any], alert_id: str | None = None) -> str:
         """写入或覆盖一条告警，返回告警 ID。"""

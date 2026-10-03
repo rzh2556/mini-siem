@@ -163,6 +163,8 @@ export interface Alert {
 /** 归一化日志事件 */
 export interface LogEvent {
   id?: string | null;
+  /** 所属上传批次号（文件上传时写入，Agent 直报为空） */
+  batch_id?: string | null;
   timestamp: string;
   host?: string | null;
   source_type?: SourceType | string | null;
@@ -412,6 +414,8 @@ export interface UploadPreviewItem {
 
 /** 日志文件上传解析结果 */
 export interface UploadResult {
+  /** 本次上传的批次号，可用于按批次删除该批日志 */
+  batch_id: string;
   /** 上传的文件名 */
   filename: string;
   /** 后端解析出的日志类型 */
@@ -428,6 +432,38 @@ export interface UploadResult {
   alerts: number;
   /** 前若干条解析结果预览 */
   preview: UploadPreviewItem[];
+}
+
+/** 上传批次条目（按文件批次管理，用于展示与删除本批日志） */
+export interface UploadBatchItem {
+  batch_id: string;
+  filename?: string | null;
+  host?: string | null;
+  source_type?: string | null;
+  /** 上传时解析出的总行数 */
+  total: number;
+  /** 上传时成功入库条数 */
+  accepted: number;
+  /** 上传时产生的告警数 */
+  alerts: number;
+  /** 文件字节大小 */
+  size_bytes: number;
+  note?: string | null;
+  created_at?: string | null;
+  /** 当前库中仍存在的该批次日志条数（可能因单条删除而减少） */
+  current: number;
+}
+
+/** 上传批次分页响应 */
+export interface UploadBatchList {
+  total: number;
+  items: UploadBatchItem[];
+}
+
+/** 删除操作结果 */
+export interface DeleteResult {
+  deleted: number;
+  message?: string;
 }
 
 /** 日志检索参数 */

@@ -1,6 +1,9 @@
 """日志上报接口：供采集 Agent、第三方脚本推送日志，以及后台上传日志文件解析。"""
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 
 from app.api.utils import require_agent_token, require_api_token
@@ -105,15 +108,47 @@ def _build_preview(host: str, source_type: str, events: list[IngestEvent]) -> li
     return preview
 
 
-async def _process_events(host: str, source_type: str, events: list[IngestEvent]) -> tuple[int, int]:
+async def _process_events(
+    host: str, source_type: str, events: list[IngestEvent], batch_id: str | None = None
+) -> tuple[int, int]:
     """分批把解析出的事件送入检测管道，返回 (入库数, 新增告警数)。"""
     accepted = 0
     alerts = 0
     for index in range(0, len(events), UPLOAD_BATCH):
-        result = await state.pipeline.process(host, source_type, events[index : index + UPLOAD_BATCH])
+        result = await state.pipeline.process(
+            host, source_type, events[index : index + UPLOAD_BATCH], batch_id
+        )
         accepted += result.accepted
         alerts += result.alerts
     return accepted, alerts
+
+
+async def _record_batch(
+    batch_id: str,
+    filename: str,
+    host: str,
+    source_type: str,
+    total: int,
+    accepted: int,
+    alerts: int,
+    size_bytes: int,
+) -> None:
+    """记录本次上传批次元数据，供检索页“上传记录”中查看与整批删除。"""
+    now = datetime.now(timezone.utc)
+    await state.storage.record_upload_batch(
+        {
+            "batch_id": batch_id,
+            "filename": filename,
+            "host": host,
+            "source_type": source_type,
+            "total": total,
+            "accepted": accepted,
+            "alerts": alerts,
+            "size_bytes": size_bytes,
+            "created_at": now.isoformat(),
+            "created_at_epoch": int(now.timestamp()),
+        }
+    )
 
 
 @router.post("/upload", response_model=UploadResult, summary="上传日志文件并解析")
@@ -137,6 +172,9 @@ async def upload_log_file(
         raise HTTPException(status_code=400, detail="文件内容为空")
 
     filename = file.filename or "upload.log"
+    # 本次上传的批次号：写入每条日志，之后可按批次整体删除
+    batch_id = uuid.uuid4().hex[:12]
+    size_bytes = len(raw)
 
     # ---------------- EVTX 分支：Windows 事件日志二进制 ----------------
     if filename.lower().endswith(".evtx") or is_evtx_content(raw):
@@ -153,12 +191,17 @@ async def upload_log_file(
             IngestEvent(raw=item["raw"], fields=item["fields"], timestamp=item["timestamp"])
             for item in parsed_events
         ]
-        accepted, alerts = await _process_events(host, "windows", events)
+        accepted, alerts = await _process_events(host, "windows", events, batch_id)
+        total_lines = len(events) + skipped
+        await _record_batch(
+            batch_id, filename, host, "windows", total_lines, accepted, alerts, size_bytes
+        )
         return UploadResult(
+            batch_id=batch_id,
             filename=filename,
             source_type="windows",
             auto_detected=True,
-            total_lines=len(events) + skipped,
+            total_lines=total_lines,
             accepted=accepted,
             skipped=skipped,
             alerts=alerts,
@@ -185,15 +228,20 @@ async def upload_log_file(
 
     processed = lines[: settings.max_upload_lines]
     events = [IngestEvent(raw=line) for line in processed]
-    accepted, alerts = await _process_events(host, resolved_type, events)
+    accepted, alerts = await _process_events(host, resolved_type, events, batch_id)
+    skipped = len(all_lines) - len(processed)
+    await _record_batch(
+        batch_id, filename, host, resolved_type, len(all_lines), accepted, alerts, size_bytes
+    )
 
     return UploadResult(
+        batch_id=batch_id,
         filename=filename,
         source_type=resolved_type,
         auto_detected=auto_detected,
         total_lines=len(all_lines),
         accepted=accepted,
-        skipped=len(all_lines) - len(processed),
+        skipped=skipped,
         alerts=alerts,
         preview=_build_preview(host, resolved_type, events),
     )

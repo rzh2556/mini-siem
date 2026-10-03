@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.utils import parse_page, parse_time, require_api_token, time_range_filter
-from app.models.schemas import SearchResult
+from app.api.utils import parse_page, parse_time, require_admin, require_api_token, time_range_filter
+from app.models.schemas import DeleteResult, SearchResult, UploadBatchList
 from app.state import state
 
 router = APIRouter(prefix="/logs", tags=["日志"], dependencies=[Depends(require_api_token)])
@@ -100,3 +100,29 @@ async def log_filters(hours: int = Query(default=24, ge=1, le=720)) -> dict[str,
         "hosts": [b["key"] for b in buckets.get("hosts", {}).get("buckets", [])],
         "levels": [b["key"] for b in buckets.get("levels", {}).get("buckets", [])],
     }
+
+
+@router.get("/uploads", response_model=UploadBatchList, summary="列出日志上传批次")
+async def list_upload_batches(
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """返回历史日志文件上传记录，供按批次整体删除某次上传的日志。"""
+    return await state.storage.list_upload_batches(page=page, size=size)
+
+
+@router.delete("/uploads/{batch_id}", response_model=DeleteResult, summary="删除整批上传日志")
+async def delete_upload_batch(
+    batch_id: str, _: str = Depends(require_admin)
+) -> dict[str, Any]:
+    """删除某次上传文件产生的全部日志，批次记录一并移除。"""
+    deleted = await state.storage.delete_upload_batch(batch_id)
+    return {"deleted": deleted}
+
+
+@router.delete("/{log_id}", response_model=DeleteResult, summary="删除单条日志")
+async def delete_log(log_id: str, _: str = Depends(require_admin)) -> dict[str, Any]:
+    """按日志 ID 删除单条日志。"""
+    if not await state.storage.delete_log(log_id):
+        raise HTTPException(status_code=404, detail="日志不存在或已被删除")
+    return {"deleted": 1}

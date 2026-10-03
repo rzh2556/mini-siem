@@ -30,6 +30,8 @@ class LogEvent(BaseModel):
     """归一化后的日志事件，所有采集源的日志都会被解析成该结构。"""
 
     id: str | None = None
+    # 所属上传批次（文件上传时写入；Agent 直报为 None），用于按批次查看与删除日志
+    batch_id: str | None = None
     timestamp: datetime = Field(default_factory=utcnow)
     host: str = "unknown"
     source_type: SourceType = "unknown"
@@ -312,6 +314,7 @@ class UploadPreviewItem(BaseModel):
 class UploadResult(BaseModel):
     """日志文件上传解析结果。"""
 
+    batch_id: str
     filename: str
     source_type: str
     auto_detected: bool
@@ -320,3 +323,32 @@ class UploadResult(BaseModel):
     skipped: int
     alerts: int
     preview: list[UploadPreviewItem] = Field(default_factory=list)
+
+
+class UploadBatchItem(BaseModel):
+    """一次日志文件上传的批次记录。"""
+
+    batch_id: str
+    filename: str | None = None
+    host: str | None = None
+    source_type: str | None = None
+    total: int = 0
+    accepted: int = 0
+    alerts: int = 0
+    size_bytes: int = 0
+    current: int = 0
+    note: str | None = None
+    created_at: str | None = None
+
+
+class UploadBatchList(BaseModel):
+    """上传批次分页列表。"""
+
+    total: int
+    items: list[UploadBatchItem] = Field(default_factory=list)
+
+
+class DeleteResult(BaseModel):
+    """删除操作的结果。"""
+
+    deleted: int = 0
