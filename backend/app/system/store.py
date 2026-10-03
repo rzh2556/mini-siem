@@ -33,6 +33,7 @@ EDITABLE_SETTINGS: dict[str, type] = {
     "ip_whitelist": str,
     "ignore_internal_src": bool,
     "geoip_online_fallback": bool,
+    "geoip_offline_only": bool,
     "geoip_db_path": str,
     "log_level": str,
     "cors_origins": str,

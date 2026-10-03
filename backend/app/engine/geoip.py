@@ -24,9 +24,13 @@ MIN_INTERVAL = 1.4
 class GeoIPResolver:
     """IP 地理位置解析器（支持离线 mmdb 与在线降级）。"""
 
-    def __init__(self, db_path: str = "", online_fallback: bool = True) -> None:
+    def __init__(
+        self, db_path: str = "", online_fallback: bool = True, offline_only: bool = False
+    ) -> None:
         """加载 mmdb 数据库（如存在），并初始化缓存。"""
         self.online_fallback = online_fallback
+        # 离线库加载成功时是否跳过在线解析（由后台“离线优先”开关控制）
+        self.offline_only = offline_only
         self._reader = None
         self._cache: dict[str, GeoInfo | None] = {}
         self._last_request = 0.0
@@ -58,7 +62,9 @@ class GeoIPResolver:
             return self._cache[ip]
 
         geo = self._resolve_offline(ip)
-        if geo is None and self.online_fallback:
+        # 开启“离线优先”且离线库已加载时，未命中的 IP 直接放弃，不再联网解析
+        skip_online = self.offline_only and self._reader is not None
+        if geo is None and self.online_fallback and not skip_online:
             geo = await self._resolve_online(ip)
         self._cache[ip] = geo
         if len(self._cache) > 5000:  # 简单容量控制

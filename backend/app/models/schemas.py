@@ -269,6 +269,7 @@ class SettingsUpdate(BaseModel):
     ip_whitelist: str | None = None
     ignore_internal_src: bool | None = None
     geoip_online_fallback: bool | None = None
+    geoip_offline_only: bool | None = None
     geoip_db_path: str | None = None
     log_level: str | None = None
     cors_origins: str | None = None

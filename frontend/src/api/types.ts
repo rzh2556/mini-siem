@@ -327,6 +327,8 @@ export interface EditableSettings {
   ip_whitelist: string;
   ignore_internal_src: boolean;
   geoip_online_fallback: boolean;
+  /** 离线库可用时是否跳过在线解析 */
+  geoip_offline_only: boolean;
   geoip_db_path: string;
   log_level: string;
   cors_origins: string;

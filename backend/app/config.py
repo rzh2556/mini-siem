@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     # ---------- GeoIP ----------
     geoip_db_path: str = ""
     geoip_online_fallback: bool = True
+    # 离线库加载成功时是否跳过在线解析（避免上传日志时逐个 IP 联网导致卡顿）
+    geoip_offline_only: bool = False
 
     # ---------- 规则 ----------
     rules_dir: str = "rules"

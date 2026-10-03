@@ -107,7 +107,9 @@ async def lifespan(app: FastAPI):
         ignore_internal=settings.ignore_internal_src,
         min_severity=settings.min_alert_severity,
     )
-    geoip = GeoIPResolver(settings.geoip_db_path, settings.geoip_online_fallback)
+    geoip = GeoIPResolver(
+        settings.geoip_db_path, settings.geoip_online_fallback, settings.geoip_offline_only
+    )
     pipeline = IngestPipeline(storage, loader, engine, aggregator, geoip)
 
     state.system = system

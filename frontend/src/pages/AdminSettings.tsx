@@ -333,6 +333,14 @@ export default function AdminSettings() {
               <Form.Item name="geoip_online_fallback" valuePropName="checked" label="无本地库时使用在线地理位置查询">
                 <Switch checkedChildren="开启" unCheckedChildren="关闭" />
               </Form.Item>
+              <Form.Item
+                name="geoip_offline_only"
+                valuePropName="checked"
+                label="离线库可用时禁用在线解析"
+                extra="开启后，只要本地 mmdb 加载成功，未命中的 IP 就不再请求在线接口，可避免上传日志时逐个 IP 联网造成卡顿。"
+              >
+                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+              </Form.Item>
               <Space wrap size={20} align="start">
                 <Form.Item name="log_level" label="日志级别" style={{ minWidth: 200 }}>
                   <Select options={LOG_LEVEL_OPTIONS} style={{ width: 200 }} />

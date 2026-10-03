@@ -95,8 +95,11 @@ async def update_settings(payload: SettingsUpdate) -> dict[str, Any]:
             state.aggregator.whitelist = settings.whitelist_ips
         if "ignore_internal_src" in changes:
             state.aggregator.ignore_internal = settings.ignore_internal_src
-    if state.geoip is not None and "geoip_online_fallback" in changes:
-        state.geoip.online_fallback = settings.geoip_online_fallback
+    if state.geoip is not None:
+        if "geoip_online_fallback" in changes:
+            state.geoip.online_fallback = settings.geoip_online_fallback
+        if "geoip_offline_only" in changes:
+            state.geoip.offline_only = settings.geoip_offline_only
     if "log_level" in changes:
         logging.getLogger().setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
