@@ -17,6 +17,7 @@ from app.api.utils import require_admin
 from app.config import settings
 from app.models.schemas import SettingsUpdate
 from app.state import state
+from app.system.env_file import default_env_path, update_env_file
 from app.system.store import EDITABLE_SETTINGS
 
 router = APIRouter(prefix="/admin", tags=["管理后台"], dependencies=[Depends(require_admin)])
@@ -99,9 +100,17 @@ async def update_settings(payload: SettingsUpdate) -> dict[str, Any]:
     if "log_level" in changes:
         logging.getLogger().setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
+    # 同步回写 .env：方便直接在文件中查看与备份；不可写时仅记录日志，不影响系统库中的保存结果
+    env_written = update_env_file(default_env_path(), changes)
+
     logger.info("管理员更新了 %d 项运行参数：%s", len(changes), ", ".join(changes))
+    hints = ["配置已保存"]
+    if env_written:
+        hints.append("已同步到 .env")
+    if restart_hint:
+        hints.append("部分参数需重启服务后生效")
     return {
-        "message": "配置已保存" + ("（部分参数需重启服务后生效）" if restart_hint else ""),
+        "message": "，".join(hints),
         "restart_required": restart_hint,
         "editable": _current_settings(),
     }
@@ -114,6 +123,8 @@ async def regenerate_agent_token() -> dict[str, str]:
     token = secrets.token_urlsafe(32)
     settings.agent_token = token
     state.system.set_value("agent_token", token)
+    # 同步回写 .env，避免重启后又用回旧令牌
+    update_env_file(default_env_path(), {"agent_token": token})
     logger.info("管理员重新生成了 Agent 采集令牌")
     return {"agent_token": token, "message": "新令牌已生效，请同步更新各 Agent 的 config.yml"}
 
