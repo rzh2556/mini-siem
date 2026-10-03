@@ -22,8 +22,9 @@ import type { LogEvent, LogFilters, LogQuery } from '../api/types';
 import { formatTime } from '../utils/format';
 import UploadLogModal from '../components/UploadLogModal';
 
-/** 可选时间范围（相对时间由后端解析） */
+/** 可选时间范围（相对时间由后端解析，空值代表不限时间） */
 const TIME_RANGES = [
+  { label: '不限时间', value: '' },
   { label: '最近 1 小时', value: '1h' },
   { label: '最近 6 小时', value: '6h' },
   { label: '最近 24 小时', value: '24h' },
@@ -31,8 +32,8 @@ const TIME_RANGES = [
   { label: '最近 30 天', value: '30d' },
 ];
 
-/** 默认时间范围 */
-const DEFAULT_FROM = '24h';
+/** 默认不限时间：检索属于主动查询，默认加 24 小时窗口会导致导入历史日志后“查不到内容” */
+const DEFAULT_FROM = '';
 
 /** 筛选表单字段（全部按字符串处理，提交时由后端解析） */
 interface LogFilterForm {
@@ -74,10 +75,12 @@ export default function Logs() {
   const [keyword, setKeyword] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
 
-  /** 从 URL 查询参数解析检索条件，默认检索最近 24 小时 */
+  /** 从 URL 查询参数解析检索条件，默认不限时间 */
   const query: LogQuery = useMemo(() => {
     const statusCode = searchParams.get('status_code');
     const size = Number(searchParams.get('size') ?? 20);
+    // 空字符串代表“不限时间”，转成 undefined 后不会作为请求参数发送
+    const from = (searchParams.get('from') ?? DEFAULT_FROM) || undefined;
     return {
       q: searchParams.get('q') ?? undefined,
       source_type: searchParams.get('source_type') ?? undefined,
@@ -87,7 +90,7 @@ export default function Logs() {
       level: searchParams.get('level') ?? undefined,
       status_code: statusCode ? Number(statusCode) : undefined,
       matched_rule: searchParams.get('matched_rule') ?? undefined,
-      from: searchParams.get('from') ?? DEFAULT_FROM,
+      from,
       to: searchParams.get('to') ?? undefined,
       sort: searchParams.get('sort') ?? 'timestamp',
       order: searchParams.get('order') === 'asc' ? 'asc' : 'desc',
@@ -116,7 +119,8 @@ export default function Logs() {
 
   /** 加载筛选项（来源类型、主机、等级） */
   const loadFilters = useCallback(() => {
-    fetchLogFilters(24)
+    // 筛选项覆盖最近 30 天，避免导入历史日志后下拉框里看不到对应的来源类型 / 主机
+    fetchLogFilters(720)
       .then(setFilters)
       .catch(() => undefined);
   }, []);
