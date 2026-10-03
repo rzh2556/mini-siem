@@ -44,7 +44,11 @@ async def overview(hours: int = Query(default=24, ge=1, le=720)) -> dict[str, An
                 "by_status": {"terms": {"field": "status", "size": 10}},
             },
         ),
-        storage.count(storage.alert_index, {"term": {"status": "open"}}),
+        # 与 alerts_total 使用同一时间窗口，避免同一页面两个指标口径不一致
+        storage.count(
+            storage.alert_index,
+            {"bool": {"filter": [{"term": {"status": "open"}}, alert_window]}},
+        ),
         storage.search(
             index=storage.alert_index,
             query=alert_window,

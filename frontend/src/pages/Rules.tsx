@@ -4,8 +4,8 @@ import type { ReactNode } from 'react';
 import {
   Button,
   Card,
+  Dropdown,
   Popconfirm,
-  Select,
   Space,
   Switch,
   Table,
@@ -42,12 +42,12 @@ const TYPE_LABELS: Record<RuleType, string> = {
   first_seen: '首次出现',
 };
 
-/** 严重等级下拉选项 */
+/** 严重等级下拉菜单项（key 与后端 severity 取值一致） */
 const SEVERITY_OPTIONS = [
-  { label: '严重', value: 'critical' },
-  { label: '高危', value: 'high' },
-  { label: '中危', value: 'medium' },
-  { label: '低危', value: 'low' },
+  { key: 'critical', label: '严重' },
+  { key: 'high', label: '高危' },
+  { key: 'medium', label: '中危' },
+  { key: 'low', label: '低危' },
 ];
 
 /** 把规则阈值配置转成中文描述 */
@@ -201,16 +201,22 @@ export default function Rules() {
       key: 'severity',
       width: 150,
       render: (severity: Severity, record) => (
-        <Space size={6}>
-          <SeverityTag severity={severity} />
-          <Select
-            size="small"
-            style={{ width: 84 }}
-            value={severity}
-            options={SEVERITY_OPTIONS}
-            onChange={(value: Severity) => handleChangeSeverity(record, value)}
-          />
-        </Space>
+        // 等级标签即修改入口：点击标签弹出下拉选择等级，避免标签与下拉框重复显示同一等级
+        <Dropdown
+          trigger={['click']}
+          menu={{
+            items: SEVERITY_OPTIONS,
+            selectable: true,
+            selectedKeys: [severity],
+            onClick: ({ key }) => handleChangeSeverity(record, key as Severity),
+          }}
+        >
+          <span style={{ cursor: 'pointer', display: 'inline-block' }}>
+            <Tooltip title="点击修改严重等级">
+              <SeverityTag severity={severity} />
+            </Tooltip>
+          </span>
+        </Dropdown>
       ),
     },
     {
