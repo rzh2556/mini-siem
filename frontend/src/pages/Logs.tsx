@@ -21,6 +21,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
+  bulkDeleteLogs,
   deleteLog,
   deleteUploadBatch,
   fetchLogFilters,
@@ -89,6 +90,9 @@ export default function Logs() {
   const [batchTotal, setBatchTotal] = useState(0);
   const [batchPage, setBatchPage] = useState(1);
   const [batchLoading, setBatchLoading] = useState(false);
+  // 表格勾选的日志 ID：支持跨页选择后批量删除
+  const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
+  const [batchDeleting, setBatchDeleting] = useState(false);
 
   /** 从 URL 查询参数解析检索条件，默认不限时间 */
   const query: LogQuery = useMemo(() => {
@@ -185,6 +189,22 @@ export default function Logs() {
         load();
       })
       .catch(() => undefined);
+  };
+
+  /** 批量删除勾选的日志，成功后清空选择并刷新 */
+  const handleBulkDelete = () => {
+    setBatchDeleting(true);
+    bulkDeleteLogs(selectedRowKeys)
+      .then((res) => {
+        message.success(`已删除 ${res.deleted} 条日志`);
+        setSelectedRowKeys([]);
+        load();
+        if (batchOpen) {
+          loadBatches(batchPage);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setBatchDeleting(false));
   };
 
   // 搜索框与筛选表单跟随 URL 变化（例如从告警页跳转携带 src_ip 时）
@@ -521,13 +541,39 @@ export default function Logs() {
       </Card>
 
       <Card>
+        <div className="table-toolbar">
+          <Popconfirm
+            title={`删除选中的 ${selectedRowKeys.length} 条日志？`}
+            description="删除后不可恢复"
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            disabled={selectedRowKeys.length === 0}
+            onConfirm={handleBulkDelete}
+          >
+            <Button
+              danger
+              disabled={selectedRowKeys.length === 0}
+              loading={batchDeleting}
+            >
+              批量删除{selectedRowKeys.length > 0 ? `（${selectedRowKeys.length}）` : ''}
+            </Button>
+          </Popconfirm>
+          <span className="table-toolbar__hint">勾选左侧复选框可批量删除，支持跨页选择</span>
+        </div>
         <Table<LogEvent>
           rowKey={(record) => record.id ?? `${record.timestamp}-${record.src_ip ?? ''}-${record.host ?? ''}`}
           size="small"
           loading={loading}
           columns={columns}
           dataSource={items}
-          scroll={{ x: 1400 }}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys as string[]),
+            getCheckboxProps: (record) => ({ disabled: !record.id }),
+            preserveSelectedRowKeys: true,
+          }}
+          scroll={{ x: 1440 }}
           locale={{ emptyText: <Empty description="暂无符合条件的日志" /> }}
           expandable={{
             expandedRowRender: renderExpanded,

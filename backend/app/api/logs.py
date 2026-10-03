@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.utils import parse_page, parse_time, require_admin, require_api_token, time_range_filter
-from app.models.schemas import DeleteResult, SearchResult, UploadBatchList
+from app.models.schemas import BulkLogDelete, DeleteResult, SearchResult, UploadBatchList
 from app.state import state
 
 router = APIRouter(prefix="/logs", tags=["日志"], dependencies=[Depends(require_api_token)])
@@ -126,3 +126,17 @@ async def delete_log(log_id: str, _: str = Depends(require_admin)) -> dict[str, 
     if not await state.storage.delete_log(log_id):
         raise HTTPException(status_code=404, detail="日志不存在或已被删除")
     return {"deleted": 1}
+
+
+@router.post("/delete", response_model=DeleteResult, summary="批量删除日志")
+async def bulk_delete_logs(
+    payload: BulkLogDelete, _: str = Depends(require_admin)
+) -> dict[str, Any]:
+    """按日志 ID 列表批量删除日志，返回实际删除条数。"""
+    return {"deleted": await state.storage.delete_logs(payload.ids)}
+
+
+@router.post("/purge", response_model=DeleteResult, summary="清空全部日志")
+async def purge_logs(_: str = Depends(require_admin)) -> dict[str, Any]:
+    """一次性清空日志库中的全部日志与上传批次记录（不影响告警）。"""
+    return {"deleted": await state.storage.purge_logs()}

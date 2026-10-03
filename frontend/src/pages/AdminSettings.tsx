@@ -23,6 +23,7 @@ import { ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import {
   fetchSettings,
   fetchSystemInfo,
+  purgeLogs,
   regenerateAgentToken,
   saveSettings,
 } from '../api/endpoints';
@@ -83,6 +84,8 @@ export default function AdminSettings() {
   const [restartKeys, setRestartKeys] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // 清空全部日志（危险操作）的执行状态
+  const [purging, setPurging] = useState(false);
 
   /** 加载系统信息与全部配置 */
   const load = useCallback(async () => {
@@ -126,6 +129,21 @@ export default function AdminSettings() {
     const result = await regenerateAgentToken();
     form.setFieldValue('agent_token', result.agent_token);
     message.success('Agent 采集令牌已重新生成，请同步更新各 Agent 配置');
+  };
+
+  /** 清空全部日志与上传批次记录（危险操作，不可恢复，不影响告警） */
+  const handlePurgeLogs = async () => {
+    setPurging(true);
+    try {
+      const result = await purgeLogs();
+      message.success(`已清空 ${result.deleted} 条日志`);
+      const systemInfo = await fetchSystemInfo();
+      setInfo(systemInfo);
+    } catch {
+      // 错误提示由 axios 拦截器统一处理
+    } finally {
+      setPurging(false);
+    }
   };
 
   return (
@@ -328,6 +346,24 @@ export default function AdminSettings() {
                   <Input placeholder="如 http://localhost:5173" style={{ width: 320 }} />
                 </Form.Item>
               </Space>
+            </Card>
+
+            <Card title="数据清理" size="small" style={{ marginBottom: 16 }}>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+                一次性清空日志库中的<strong>全部日志</strong>与上传批次记录，操作不可恢复；告警数据不受影响。
+              </Typography.Paragraph>
+              <Popconfirm
+                title="确认清空全部日志？"
+                description="将永久删除数据库中的全部日志与上传记录，且无法恢复。"
+                okText="确认清空"
+                okButtonProps={{ danger: true }}
+                cancelText="取消"
+                onConfirm={handlePurgeLogs}
+              >
+                <Button danger loading={purging}>
+                  清空全部日志
+                </Button>
+              </Popconfirm>
             </Card>
 
             <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>

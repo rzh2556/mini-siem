@@ -550,6 +550,38 @@ class SQLiteStorage:
         self._conn.commit()
         return (cursor.rowcount or 0) > 0
 
+    async def delete_logs(self, log_ids: list[str]) -> int:
+        """按 ID 列表批量删除日志，返回删除条数。"""
+        return await self._call(self._delete_logs_sync, log_ids)
+
+    def _delete_logs_sync(self, log_ids: list[str]) -> int:
+        """同步批量删除日志行，忽略非法 ID。"""
+        numeric_ids: list[int] = []
+        for log_id in log_ids:
+            try:
+                numeric_ids.append(int(log_id))
+            except (TypeError, ValueError):
+                continue
+        if not numeric_ids:
+            return 0
+        placeholders = ",".join("?" * len(numeric_ids))
+        cursor = self._conn.execute(f"DELETE FROM logs WHERE id IN ({placeholders})", numeric_ids)
+        removed = cursor.rowcount or 0
+        self._conn.commit()
+        return removed
+
+    async def purge_logs(self) -> int:
+        """清空全部日志与上传批次记录，返回被清除的日志条数（告警不受影响）。"""
+        return await self._call(self._purge_logs_sync)
+
+    def _purge_logs_sync(self) -> int:
+        """同步清空 logs 与 upload_batches 两张表。"""
+        removed = int(self._conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0])
+        self._conn.execute("DELETE FROM logs")
+        self._conn.execute("DELETE FROM upload_batches")
+        self._conn.commit()
+        return removed
+
     async def index_alert(self, doc: dict[str, Any], alert_id: str | None = None) -> str:
         """写入或覆盖一条告警，返回告警 ID。"""
         new_id = alert_id or uuid.uuid4().hex

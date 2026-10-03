@@ -352,3 +352,9 @@ class DeleteResult(BaseModel):
     """删除操作的结果。"""
 
     deleted: int = 0
+
+
+class BulkLogDelete(BaseModel):
+    """批量删除日志入参：按日志 ID 列表删除。"""
+
+    ids: list[str] = Field(default_factory=list)

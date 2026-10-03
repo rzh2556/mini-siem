@@ -217,6 +217,36 @@ class ESStorage:
         except NotFoundError:
             return False
 
+    async def delete_logs(self, log_ids: list[str]) -> int:
+        """按 ID 列表批量删除日志，返回删除条数。"""
+        if not log_ids:
+            return 0
+        resp = await self.client.delete_by_query(
+            index=self.log_index_pattern,
+            query={"ids": {"values": log_ids}},
+            refresh=True,
+            conflicts="proceed",
+        )
+        return int(resp.get("deleted", 0))
+
+    async def purge_logs(self) -> int:
+        """清空全部日志与上传批次记录，返回被清除的日志条数（告警不受影响）。"""
+        resp = await self.client.delete_by_query(
+            index=self.log_index_pattern,
+            query={"match_all": {}},
+            refresh=True,
+            conflicts="proceed",
+        )
+        removed = int(resp.get("deleted", 0))
+        # 上传批次记录一并清空，避免批次列表残留却查不到日志
+        await self.client.delete_by_query(
+            index=self.upload_index,
+            query={"match_all": {}},
+            refresh=True,
+            conflicts="proceed",
+        )
+        return removed
+
     async def index_alert(self, doc: dict[str, Any], alert_id: str | None = None) -> str:
         """写入或覆盖一条告警，返回告警 ID。"""
         resp = await self.client.index(

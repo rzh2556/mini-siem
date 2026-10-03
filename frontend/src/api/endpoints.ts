@@ -143,6 +143,18 @@ export async function deleteLog(logId: string): Promise<DeleteResult> {
   return data;
 }
 
+/** 批量删除日志（按日志 ID 列表）。 */
+export async function bulkDeleteLogs(ids: string[]): Promise<DeleteResult> {
+  const { data } = await client.post<DeleteResult>('/logs/delete', { ids });
+  return data;
+}
+
+/** 清空全部日志（含上传批次记录，不影响告警）。 */
+export async function purgeLogs(): Promise<DeleteResult> {
+  const { data } = await client.post<DeleteResult>('/logs/purge');
+  return data;
+}
+
 /** 获取全部检测规则及启停状态。 */
 export async function fetchRules(): Promise<RulesResponse> {
   const { data } = await client.get<RulesResponse>('/rules');
