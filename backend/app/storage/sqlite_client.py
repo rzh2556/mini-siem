@@ -115,7 +115,6 @@ CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts_epoch);
 CREATE INDEX IF NOT EXISTS idx_logs_src_ip ON logs(src_ip);
 CREATE INDEX IF NOT EXISTS idx_logs_host ON logs(host);
 CREATE INDEX IF NOT EXISTS idx_logs_source ON logs(source_type);
-CREATE INDEX IF NOT EXISTS idx_logs_batch ON logs(batch_id);
 
 CREATE TABLE IF NOT EXISTS upload_batches (
     batch_id TEXT PRIMARY KEY,
@@ -400,11 +399,15 @@ class SQLiteStorage:
             self._conn.commit()
 
     def _migrate(self) -> None:
-        """老版本数据库升级：为 logs 表补充 batch_id 列（用于按上传批次删除日志）。"""
+        """老版本数据库升级：为 logs 表补充 batch_id 列并建立索引（幂等）。
+
+        注意：索引必须在补列之后创建。老库的 logs 表初始没有 batch_id 列，
+        若在 SCHEMA_SQL 里直接建该索引会因缺列导致整个初始化失败。
+        """
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(logs)")}
         if "batch_id" not in columns:
             self._conn.execute("ALTER TABLE logs ADD COLUMN batch_id TEXT")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_batch ON logs(batch_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_batch ON logs(batch_id)")
 
     async def _call(self, func, *args) -> Any:
         """在线程中加锁执行同步数据库操作，避免阻塞事件循环。"""
