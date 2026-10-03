@@ -7,11 +7,12 @@
 """
 from __future__ import annotations
 
-import io
 import logging
+import os
 import re
+import tempfile
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.normalize.parsers import parse_ts
@@ -48,9 +49,14 @@ def _parse_system_time(value: str | None) -> datetime | None:
     normalized = _FRACTION_RE.sub(lambda m: (m.group(1)[:7]).ljust(7, "0"), value)
     # 上面把小数秒补齐到 6 位（含小数点共 7 个字符）
     try:
-        return datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
     except ValueError:
         return parse_ts(value)
+    # Windows 事件时间统一按 UTC 处理：部分 EVTX 的 SystemTime 不带时区，
+    # 若返回 naive 时间会与其它日志源（parse_ts 统一返回 aware UTC）混用而报错
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _parse_record_xml(xml_str: str) -> dict[str, Any] | None:
@@ -114,19 +120,27 @@ def parse_evtx(raw: bytes, max_records: int) -> tuple[list[dict[str, Any]], int]
     events: list[dict[str, Any]] = []
     skipped = 0
     truncated = 0
-    with Evtx(io.BytesIO(raw)) as log:
-        for index, record in enumerate(log.records()):
-            if index >= max_records:
-                truncated += 1
-                continue
-            try:
-                xml_str = record.xml()
-                parsed = _parse_record_xml(xml_str)
-            except Exception as exc:  # 单条损坏不应导致整个文件失败
-                logger.debug("EVTX 第 %s 条记录解析失败，已跳过: %s", index + 1, exc)
-                parsed = None
-            if parsed is None:
-                skipped += 1
-            else:
-                events.append(parsed)
+    # python-evtx 的 Evtx 只接受磁盘路径（内部 open + mmap），
+    # 因此先把上传的二进制内容写入临时文件，解析结束后删除
+    fd, tmp_path = tempfile.mkstemp(suffix=".evtx", prefix="siem_evtx_")
+    try:
+        with os.fdopen(fd, "wb") as tmp_file:
+            tmp_file.write(raw)
+        with Evtx(tmp_path) as log:
+            for index, record in enumerate(log.records()):
+                if index >= max_records:
+                    truncated += 1
+                    continue
+                try:
+                    xml_str = record.xml()
+                    parsed = _parse_record_xml(xml_str)
+                except Exception as exc:  # 单条损坏不应导致整个文件失败
+                    logger.debug("EVTX 第 %s 条记录解析失败，已跳过: %s", index + 1, exc)
+                    parsed = None
+                if parsed is None:
+                    skipped += 1
+                else:
+                    events.append(parsed)
+    finally:
+        os.unlink(tmp_path)
     return events, skipped + truncated
